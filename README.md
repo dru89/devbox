@@ -143,7 +143,7 @@ This blocks all access to port 4242 except traffic arriving via the Tailscale in
 From your development machine (in the repo root):
 
 ```bash
-DEVBOX_SERVER=yourserver ./deploy.sh
+DEVBOX_HOST=yourserver ./deploy.sh
 ```
 
 Replace `yourserver` with the SSH hostname or alias for your server (whatever works with `ssh yourserver`).
@@ -157,10 +157,10 @@ This will:
 ### Deploy options
 
 ```bash
-DEVBOX_SERVER=yourserver ./deploy.sh --image-only   # rebuild Docker image only
-DEVBOX_SERVER=yourserver ./deploy.sh --scripts      # reinstall CLI scripts only
-DEVBOX_SERVER=yourserver ./deploy.sh --web          # restart webapp only
-DEVBOX_SERVER=yourserver DEPLOY_USER=alice ./deploy.sh  # run webapp as a specific user
+DEVBOX_HOST=yourserver ./deploy.sh --image-only   # rebuild Docker image only
+DEVBOX_HOST=yourserver ./deploy.sh --scripts      # reinstall CLI scripts only
+DEVBOX_HOST=yourserver ./deploy.sh --web          # restart webapp only
+DEVBOX_HOST=yourserver DEPLOY_USER=alice ./deploy.sh  # run webapp as a specific user
 ```
 
 ---
