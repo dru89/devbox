@@ -57,7 +57,7 @@ Create `/etc/devbox/config` (readable by root and your user):
 sudo mkdir -p /etc/devbox
 sudo tee /etc/devbox/config <<'EOF'
 # Tailscale OAuth client credentials — create at:
-#   https://login.tailscale.com/admin/settings/oauth
+#   Tailscale admin → Settings → Trust Credentials → OAuth Clients
 # Grant: Auth Keys (write) and Devices (read + write)
 # OAuth clients don't expire, unlike API access tokens.
 TAILSCALE_CLIENT_ID="..."
