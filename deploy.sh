@@ -76,7 +76,7 @@ fi
 # ── Sync repo to server ───────────────────────────────────────────────────────
 
 step "Syncing repo to ${DEVBOX_SERVER}:${REMOTE_DIR}"
-ssh "$DEVBOX_SERVER" "sudo mkdir -p ${REMOTE_DIR} && sudo chown \$(whoami):\$(whoami) ${REMOTE_DIR}"
+ssh "$DEVBOX_SERVER" "mkdir -p ${REMOTE_DIR}"
 rsync -av --delete \
     --exclude='.git' \
     --exclude='node_modules' \

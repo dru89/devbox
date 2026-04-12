@@ -80,8 +80,8 @@ sudo chown root:$(whoami) /etc/devbox/config
 ### 2. Data and log directories
 
 ```bash
-sudo mkdir -p /data/devboxes /var/log/devbox
-sudo chown $(whoami):$(whoami) /data/devboxes /var/log/devbox
+sudo mkdir -p /data/devboxes /var/log/devbox /opt/devbox
+sudo chown $(whoami):$(whoami) /data/devboxes /var/log/devbox /opt/devbox
 ```
 
 ### 3. Docker access
