@@ -56,9 +56,12 @@ Create `/etc/devbox/config` (readable by root and your user):
 ```bash
 sudo mkdir -p /etc/devbox
 sudo tee /etc/devbox/config <<'EOF'
-# Tailscale API key — generate at https://login.tailscale.com/admin/settings/keys
-# Choose "API access tokens" → "Generate access token"
-TAILSCALE_API_KEY="tskey-api-..."
+# Tailscale OAuth client credentials — create at:
+#   https://login.tailscale.com/admin/settings/oauth
+# Grant: Auth Keys (write) and Devices (read + write)
+# OAuth clients don't expire, unlike API access tokens.
+TAILSCALE_CLIENT_ID="..."
+TAILSCALE_CLIENT_SECRET="tskey-client-..."
 
 # Your tailnet name — shown in the Tailscale admin console top-left
 # Usually "yourname.ts.net" or "yourorg.com"
@@ -164,11 +167,18 @@ DEVBOX_SERVER=yourserver DEPLOY_USER=alice ./deploy.sh  # run webapp as a specif
 
 You can run `devbox` commands from your laptop — not just from the server — by setting `DEVBOX_HOST`.
 
-### 1. Copy the script locally
+### 1. Install locally
+
+From the repo root:
 
 ```bash
-cp scripts/devbox /usr/local/bin/devbox
-chmod +x /usr/local/bin/devbox
+make install
+```
+
+This installs `devbox` to `/usr/local/bin/` and the zsh completion function to `/usr/local/share/zsh/site-functions/`. Override `PREFIX` to install elsewhere:
+
+```bash
+make install PREFIX=~/.local
 ```
 
 ### 2. Set DEVBOX_HOST
@@ -389,7 +399,7 @@ State is stored in `/data/devboxes/.state.json` on the server:
 
 **Tailscale doesn't come up in the container:**
 - Make sure `tag:devbox` exists in your Tailscale ACL policy
-- Check your API key in `/etc/devbox/config` — keys expire, generate a new one if needed
+- Check `TAILSCALE_CLIENT_ID` and `TAILSCALE_CLIENT_SECRET` in `/etc/devbox/config`
 - Check container logs: `docker logs devbox-<name>`
 
 **Can't SSH into a devbox:**
@@ -407,5 +417,12 @@ State is stored in `/data/devboxes/.state.json` on the server:
 - Pin the devbox via the webapp to prevent auto-stop
 
 **`devbox create` fails with Tailscale API error:**
-- Verify `TAILSCALE_API_KEY` and `TAILSCALE_TAILNET` are correct in `/etc/devbox/config`
-- Test manually: `curl -H "Authorization: Bearer $TAILSCALE_API_KEY" https://api.tailscale.com/api/v2/tailnet/$TAILSCALE_TAILNET/devices`
+- Verify `TAILSCALE_CLIENT_ID`, `TAILSCALE_CLIENT_SECRET`, and `TAILSCALE_TAILNET` in `/etc/devbox/config`
+- Make sure your OAuth client has Auth Keys (write) and Devices (read + write) grants
+- Test token exchange manually:
+  ```bash
+  curl -X POST https://api.tailscale.com/api/v2/oauth/token \
+    -d "client_id=$TAILSCALE_CLIENT_ID" \
+    -d "client_secret=$TAILSCALE_CLIENT_SECRET" \
+    -d "grant_type=client_credentials"
+  ```
