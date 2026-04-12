@@ -27,15 +27,38 @@ else
     log "Warning: TAILSCALE_AUTH_KEY not set. Tailscale will not authenticate."
 fi
 
+# ── User setup ───────────────────────────────────────────────────────────────
+
+# Create a named user if DEVBOX_USER is set, so you can SSH in as yourself
+# rather than root. The user gets passwordless sudo for full dev access.
+if [[ -n "${DEVBOX_USER:-}" ]]; then
+    if ! id "$DEVBOX_USER" &>/dev/null; then
+        log "Creating user '${DEVBOX_USER}'..."
+        useradd -m -s /bin/bash "$DEVBOX_USER"
+        echo "${DEVBOX_USER} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/${DEVBOX_USER}"
+        chmod 440 "/etc/sudoers.d/${DEVBOX_USER}"
+    fi
+    chown "${DEVBOX_USER}:${DEVBOX_USER}" /workspace
+    log "User '${DEVBOX_USER}' ready."
+fi
+
 # ── SSH keys ─────────────────────────────────────────────────────────────────
 
-# Inject SSH public key(s) if provided via environment variable.
-# DEVBOX_SSH_PUBKEY can contain one or more public keys (newline-separated).
+# Install SSH public key(s) for both root (fallback) and DEVBOX_USER if set.
+_install_ssh_keys() {
+    local ssh_dir="$1" owner="$2"
+    mkdir -p "$ssh_dir"
+    chmod 700 "$ssh_dir"
+    echo "${DEVBOX_SSH_PUBKEY}" >> "${ssh_dir}/authorized_keys"
+    chmod 600 "${ssh_dir}/authorized_keys"
+    [[ "$owner" != "root" ]] && chown -R "${owner}:${owner}" "$ssh_dir"
+}
+
 if [[ -n "${DEVBOX_SSH_PUBKEY:-}" ]]; then
-    mkdir -p /root/.ssh
-    chmod 700 /root/.ssh
-    echo "${DEVBOX_SSH_PUBKEY}" >> /root/.ssh/authorized_keys
-    chmod 600 /root/.ssh/authorized_keys
+    _install_ssh_keys /root/.ssh root
+    if [[ -n "${DEVBOX_USER:-}" ]]; then
+        _install_ssh_keys "/home/${DEVBOX_USER}/.ssh" "$DEVBOX_USER"
+    fi
     log "SSH public key(s) installed."
 elif [[ ! -s /root/.ssh/authorized_keys ]]; then
     log "Warning: No SSH public key provided. Set DEVBOX_SSH_PUBKEY to enable SSH access."

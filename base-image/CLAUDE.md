@@ -15,7 +15,7 @@ You are running inside a **devbox** — an isolated Docker container provisioned
 
 ## Networking
 
-- **Tailscale is running** inside this container. The box is reachable by its devbox name on the tailnet (e.g., `ssh root@clever-otter`).
+- **Tailscale is running** inside this container. The box is reachable by its devbox name on the tailnet (e.g., `ssh drew@clever-otter`).
 - This container has its own Tailscale node — it appears independently in the tailnet admin console.
 - The container may also be shared publicly via a Cloudflare Tunnel (check `devbox share` status on the host).
 
@@ -53,9 +53,9 @@ This installs the Claude Code CLI (`claude`) using the official installer.
 ## SSH / Remote Development
 
 - SSH is running on port 22.
-- Connect from your Mac: `ssh root@<devbox-name>` (via Tailscale)
+- Connect from your Mac: `ssh <you>@<devbox-name>` (via Tailscale)
 - Works with **Zed Remote SSH** and **VSCode Remote - SSH** extensions.
-- Add your SSH public key to `/root/.ssh/authorized_keys` if not already present.
+- Your user has passwordless sudo. Root is also accessible as a fallback.
 
 ## Idle Detection
 

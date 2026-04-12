@@ -244,14 +244,14 @@ cmd_create() {
 
     if [[ "$existing_state" == "running" ]]; then
         log "'${name}' is already running."
-        _print_connection_info "$name"
+        _print_connection_info "$name" "$(whoami)"
         return 0
     fi
 
     if [[ "$existing_state" == "exited" || "$existing_state" == "created" ]]; then
         log "Resuming '${name}'..."
         docker start "$container"
-        _print_connection_info "$name"
+        _print_connection_info "$name" "$(whoami)"
         return 0
     fi
 
@@ -279,11 +279,12 @@ cmd_create() {
         -e "TAILSCALE_AUTH_KEY=${ts_auth_key}" \
         -e "DEVBOX_IDLE_TIMEOUT=${idle_timeout}" \
         -e "DEVBOX_NAME=${name}" \
+        -e "DEVBOX_USER=$(whoami)" \
         -e "DEVBOX_SSH_PUBKEY=${ssh_pubkey}" \
         "$DEVBOX_IMAGE"
 
     state_set "$name" "pinned" "$($pin && echo 'true' || echo 'false')"
-    _print_connection_info "$name"
+    _print_connection_info "$name" "$(whoami)"
 }
 
 cmd_stop() {
@@ -620,6 +621,7 @@ _full_recreate() {
         -e "TAILSCALE_AUTH_KEY=${ts_auth_key}" \
         -e "DEVBOX_IDLE_TIMEOUT=${idle_timeout}" \
         -e "DEVBOX_NAME=${name}" \
+        -e "DEVBOX_USER=$(whoami)" \
         -e "DEVBOX_SSH_PUBKEY=${ssh_pubkey}" \
         "$DEVBOX_IMAGE"
 
@@ -629,7 +631,7 @@ _full_recreate() {
             log "Warning: Could not restart tunnel. Run: devbox share ${name} --port ${share_port}"
     fi
 
-    _print_connection_info "$name"
+    _print_connection_info "$name" "$(whoami)"
 }
 
 _upgrade_one() {
@@ -898,7 +900,7 @@ EOF
 # ── Shared output ─────────────────────────────────────────────────────────────
 
 _print_connection_info() {
-    local name="$1"
+    local name="$1" ssh_user="${2:-root}"
     log "Waiting for Tailscale IP..."
     local ts_ip
     ts_ip=$(wait_for_tailscale_ip "$name")
@@ -909,7 +911,7 @@ _print_connection_info() {
 
     echo ""
     echo "devbox '${name}' is ready"
-    echo "  ssh root@${name}"
+    echo "  ssh ${ssh_user}@${name}"
     echo "  Tailscale IP: ${ts_ip}"
     echo "  Data: ${DATA_ROOT}/${name}"
     [[ "$pinned" == "true" ]] \

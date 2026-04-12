@@ -6,6 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Install core packages
 RUN apt-get update && apt-get install -y \
     openssh-server \
+    sudo \
     git \
     curl \
     wget \
@@ -25,9 +26,11 @@ RUN apt-get update && apt-get install -y \
 RUN curl -fsSL https://tailscale.com/install.sh | sh
 
 # Install mise (formerly rtx) for Node/Python version management
+# Install to /usr/local/bin so it's available to all users, not just root
 RUN curl https://mise.run | sh && \
-    echo 'eval "$(~/.local/bin/mise activate bash)"' >> /root/.bashrc && \
-    echo 'eval "$(~/.local/bin/mise activate bash)"' >> /etc/profile.d/mise.sh
+    mv /root/.local/bin/mise /usr/local/bin/mise && \
+    echo 'eval "$(mise activate bash)"' >> /root/.bashrc && \
+    echo 'eval "$(mise activate bash)"' >> /etc/profile.d/mise.sh
 
 # Configure SSH
 RUN mkdir -p /var/run/sshd && \
