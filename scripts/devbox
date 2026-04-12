@@ -1,0 +1,905 @@
+#!/usr/bin/env bash
+# devbox — manage devbox containers
+#
+# Usage: devbox <command> [args]
+# Run 'devbox help' or 'devbox help <command>' for details.
+
+set -euo pipefail
+
+# ── Config ────────────────────────────────────────────────────────────────────
+
+DEVBOX_IMAGE="${DEVBOX_IMAGE:-devbox-base}"
+DATA_ROOT="${DEVBOX_DATA_ROOT:-/data/devboxes}"
+STATE_FILE="${DATA_ROOT}/.state.json"
+CONFIG_FILE="${DEVBOX_CONFIG:-/etc/devbox/config}"
+LOG_DIR="/var/log/devbox"
+SSH_PUBKEY_FILE="${ssh_pubkey_file:-$HOME/.ssh/authorized_keys}"
+
+# ── Word lists ────────────────────────────────────────────────────────────────
+
+ADJECTIVES=(
+    clever swift silent golden cosmic vivid rugged hollow bright amber
+    noble steady fierce gentle rapid lunar solar arctic ember frozen
+    ancient daring electric fleeting serene nimble dazzling curious valiant
+    stormy radiant midnight crystal phantom silver obsidian cobalt crimson
+)
+
+NOUNS=(
+    otter falcon raven panda gecko crane heron badger cobra lynx
+    meerkat narwhal osprey puffin quasar nebula comet pulsar vortex
+    bastion citadel summit canyon glacier mesa delta fjord tundra
+    nomad pilgrim ranger herald cipher beacon vector prism lantern
+    compass anchor scepter
+)
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+log() { echo "[devbox] $*"; }
+err() { echo "[devbox] error: $*" >&2; }
+die() { err "$*"; exit 1; }
+
+load_config() {
+    [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE" || true
+}
+
+random_name() {
+    echo "${ADJECTIVES[$((RANDOM % ${#ADJECTIVES[@]}))]}-${NOUNS[$((RANDOM % ${#NOUNS[@]}))]}"
+}
+
+# ── State file ────────────────────────────────────────────────────────────────
+
+state_get() {
+    local name="$1" path="$2"
+    [[ -f "$STATE_FILE" ]] || { echo ""; return; }
+    jq -r --arg name "$name" ".[\$name]${path} // empty" "$STATE_FILE" 2>/dev/null || true
+}
+
+state_set() {
+    local name="$1" key="$2" value="$3" tmp
+    mkdir -p "$(dirname "$STATE_FILE")"
+    [[ -f "$STATE_FILE" ]] || echo '{}' > "$STATE_FILE"
+    tmp=$(mktemp)
+    jq --arg name "$name" --arg key "$key" --argjson val "$value" \
+        '.[$name][$key] = $val' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+state_set_share() {
+    local name="$1" active="$2" url="${3:-}" port="${4:-80}" tmp
+    mkdir -p "$(dirname "$STATE_FILE")"
+    [[ -f "$STATE_FILE" ]] || echo '{}' > "$STATE_FILE"
+    tmp=$(mktemp)
+    jq --arg name "$name" \
+       --argjson active "$active" \
+       --arg url "$url" \
+       --argjson port "$port" \
+       '.[$name].share = {"active": $active, "url": $url, "port": $port}' \
+       "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+state_delete() {
+    local name="$1" tmp
+    [[ -f "$STATE_FILE" ]] || return 0
+    tmp=$(mktemp)
+    jq --arg name "$name" 'del(.[$name])' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+# ── Tailscale ─────────────────────────────────────────────────────────────────
+
+generate_tailscale_key() {
+    [[ -n "${TAILSCALE_API_KEY:-}"  ]] || die "TAILSCALE_API_KEY not set in ${CONFIG_FILE}"
+    [[ -n "${TAILSCALE_TAILNET:-}" ]] || die "TAILSCALE_TAILNET not set in ${CONFIG_FILE}"
+
+    local response
+    response=$(curl -sf -X POST \
+        -H "Authorization: Bearer ${TAILSCALE_API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "capabilities": {
+                "devices": {
+                    "create": {
+                        "reusable": false,
+                        "ephemeral": true,
+                        "preauthorized": true,
+                        "tags": ["tag:devbox"]
+                    }
+                }
+            },
+            "expirySeconds": 300
+        }' \
+        "https://api.tailscale.com/api/v2/tailnet/${TAILSCALE_TAILNET}/keys") || \
+        die "Failed to create Tailscale auth key. Check TAILSCALE_API_KEY and TAILSCALE_TAILNET."
+
+    echo "$response" | jq -r '.key'
+}
+
+wait_for_tailscale_ip() {
+    local name="$1" container="devbox-${1}" attempts=0
+    while [[ $attempts -lt 20 ]]; do
+        local ip
+        ip=$(docker exec "$container" tailscale ip -4 2>/dev/null || true)
+        [[ -n "$ip" ]] && { echo "$ip"; return 0; }
+        sleep 3
+        attempts=$(( attempts + 1 ))
+    done
+    echo ""
+}
+
+remove_tailscale_node() {
+    local name="$1"
+    if [[ -z "${TAILSCALE_API_KEY:-}" || -z "${TAILSCALE_TAILNET:-}" ]]; then
+        log "Warning: Tailscale credentials not set — skipping node removal."
+        return 0
+    fi
+
+    local devices_json node_id
+    devices_json=$(curl -sf \
+        -H "Authorization: Bearer ${TAILSCALE_API_KEY}" \
+        "https://api.tailscale.com/api/v2/tailnet/${TAILSCALE_TAILNET}/devices") || {
+        log "Warning: Could not list Tailscale devices — skipping node removal."
+        return 0
+    }
+
+    node_id=$(echo "$devices_json" | jq -r --arg name "$name" \
+        '.devices[] | select(.hostname == $name) | .id' | head -1)
+
+    if [[ -z "$node_id" ]]; then
+        log "No Tailscale node found for '${name}'."
+        return 0
+    fi
+
+    curl -sf -X DELETE \
+        -H "Authorization: Bearer ${TAILSCALE_API_KEY}" \
+        "https://api.tailscale.com/api/v2/device/${node_id}" && \
+        log "Tailscale node '${name}' removed." || \
+        log "Warning: Failed to remove Tailscale node ${node_id}."
+}
+
+# ── Commands ──────────────────────────────────────────────────────────────────
+
+cmd_list() {
+    local containers
+    containers=$(docker ps -a --filter 'name=devbox-' --format '{{.Names}}\t{{.Status}}' 2>/dev/null || true)
+
+    if [[ -z "$containers" ]]; then
+        echo "No devboxes found."
+        return 0
+    fi
+
+    printf "%-20s %-10s %-8s %-8s %s\n" "NAME" "STATUS" "PINNED" "SHARED" "URL"
+    printf "%-20s %-10s %-8s %-8s %s\n" "----" "------" "------" "------" "---"
+
+    while IFS=$'\t' read -r container_name status_raw; do
+        local name="${container_name#devbox-}"
+        local status="stopped"
+        [[ "$status_raw" == Up* ]] && status="running"
+
+        local pinned shared url
+        pinned=$(state_get "$name" '.pinned // false')
+        shared=$(state_get  "$name" '.share.active // false')
+        url=$(state_get     "$name" '.share.url // ""')
+
+        [[ "$pinned" == "true" ]] && pinned="yes" || pinned="no"
+        [[ "$shared" == "true" ]] && shared="yes" || shared="no"
+
+        printf "%-20s %-10s %-8s %-8s %s\n" "$name" "$status" "$pinned" "$shared" "$url"
+    done <<< "$containers"
+}
+
+cmd_create() {
+    local name="" pin=false idle_timeout=30
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --pin)            pin=true; shift ;;
+            --timeout)        idle_timeout="$2"; shift 2 ;;
+            --help|-h)        _help_create; return 0 ;;
+            -*)               die "Unknown flag: $1" ;;
+            *)                [[ -z "$name" ]] || die "Unexpected argument: $1"; name="$1"; shift ;;
+        esac
+    done
+
+    load_config
+    mkdir -p "$LOG_DIR"
+
+    [[ -z "$name" ]] && name=$(random_name) && log "Generated name: ${name}"
+    $pin && idle_timeout=0
+
+    local container="devbox-${name}"
+    local data_dir="${DATA_ROOT}/${name}"
+    local existing_state
+    existing_state=$(docker inspect "$container" --format '{{.State.Status}}' 2>/dev/null || echo "")
+
+    if [[ "$existing_state" == "running" ]]; then
+        log "'${name}' is already running."
+        _print_connection_info "$name"
+        return 0
+    fi
+
+    if [[ "$existing_state" == "exited" || "$existing_state" == "created" ]]; then
+        log "Resuming '${name}'..."
+        docker start "$container"
+        _print_connection_info "$name"
+        return 0
+    fi
+
+    log "Creating '${name}'..."
+    mkdir -p "$data_dir"
+
+    local ts_auth_key
+    ts_auth_key=$(generate_tailscale_key)
+
+    local ssh_pubkey=""
+    if [[ -n "${DEVBOX_SSH_PUBKEY:-}" ]]; then
+        ssh_pubkey="$DEVBOX_SSH_PUBKEY"
+    elif [[ -f "$SSH_PUBKEY_FILE" ]]; then
+        ssh_pubkey=$(cat "$SSH_PUBKEY_FILE")
+    else
+        log "Warning: No SSH public key found. Set DEVBOX_SSH_PUBKEY or populate ${SSH_PUBKEY_FILE}."
+    fi
+
+    docker run -d \
+        --name "$container" \
+        --hostname "$name" \
+        --cap-add=NET_ADMIN \
+        --device=/dev/net/tun \
+        -v "${data_dir}:/workspace" \
+        -e "TAILSCALE_AUTH_KEY=${ts_auth_key}" \
+        -e "DEVBOX_IDLE_TIMEOUT=${idle_timeout}" \
+        -e "DEVBOX_NAME=${name}" \
+        -e "DEVBOX_SSH_PUBKEY=${ssh_pubkey}" \
+        "$DEVBOX_IMAGE"
+
+    state_set "$name" "pinned" "$($pin && echo 'true' || echo 'false')"
+    _print_connection_info "$name"
+}
+
+cmd_stop() {
+    local name="${1:-}"
+    [[ -n "$name" ]] || { _help_stop; return 1; }
+    [[ "$name" == "--help" || "$name" == "-h" ]] && { _help_stop; return 0; }
+
+    local container="devbox-${name}"
+    docker inspect "$container" &>/dev/null || die "No devbox named '${name}'."
+
+    log "Stopping '${name}'..."
+    docker stop "$container"
+    echo "devbox '${name}' stopped."
+}
+
+cmd_destroy() {
+    local name="${1:-}"
+    [[ -n "$name" ]] || { _help_destroy; return 1; }
+    [[ "$name" == "--help" || "$name" == "-h" ]] && { _help_destroy; return 0; }
+
+    load_config
+
+    local container="devbox-${name}"
+    docker inspect "$container" &>/dev/null || die "No devbox named '${name}'."
+
+    # Stop any active tunnel before removing the container
+    local share_active
+    share_active=$(state_get "$name" '.share.active // false')
+    if [[ "$share_active" == "true" ]]; then
+        log "Stopping active tunnel for '${name}'..."
+        cmd_unshare "$name" 2>/dev/null || true
+    fi
+
+    local status
+    status=$(docker inspect "$container" --format '{{.State.Status}}')
+    if [[ "$status" == "running" ]]; then
+        log "Stopping '${name}'..."
+        docker stop "$container"
+    fi
+
+    log "Removing container '${name}'..."
+    docker rm "$container"
+
+    remove_tailscale_node "$name"
+    state_delete "$name"
+
+    echo ""
+    echo "devbox '${name}' destroyed."
+    echo "  Data preserved at: ${DATA_ROOT}/${name}"
+}
+
+cmd_share() {
+    local name="" port=3000
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --port)    port="$2"; shift 2 ;;
+            --help|-h) _help_share; return 0 ;;
+            -*)        die "Unknown flag: $1" ;;
+            *)         [[ -z "$name" ]] || die "Unexpected argument: $1"; name="$1"; shift ;;
+        esac
+    done
+
+    [[ -n "$name" ]] || { _help_share; return 1; }
+
+    local container="devbox-${name}"
+    local status
+    status=$(docker inspect "$container" --format '{{.State.Status}}' 2>/dev/null || echo "")
+    [[ "$status" == "running" ]] || die "'${name}' is not running. Start it first with: devbox start ${name}"
+
+    mkdir -p "$LOG_DIR"
+    local pid_file="${LOG_DIR}/tunnel-${name}.pid"
+    local tunnel_log="${LOG_DIR}/tunnel-${name}.log"
+
+    # Kill any existing tunnel for this devbox
+    if [[ -f "$pid_file" ]]; then
+        local existing_pid
+        existing_pid=$(cat "$pid_file")
+        kill "$existing_pid" 2>/dev/null || true
+        rm -f "$pid_file"
+    fi
+
+    # Resolve the devbox's MagicDNS hostname from the host's Tailscale peer list.
+    # MagicDNS hostnames are stable across destroy/recreate; IPs are not.
+    local ts_hostname
+    ts_hostname=$(tailscale status --json 2>/dev/null \
+        | jq -r --arg name "$name" \
+            '.Peer[] | select(.HostName == $name) | .DNSName' \
+        | head -1 \
+        | sed 's/\.$//')   # strip trailing dot
+
+    if [[ -z "$ts_hostname" ]]; then
+        # Fallback: try Tailscale IP directly from inside the container
+        log "MagicDNS hostname not found in peer list; falling back to Tailscale IP..."
+        ts_hostname=$(docker exec "$container" tailscale ip -4 2>/dev/null | head -1 || true)
+        [[ -n "$ts_hostname" ]] || die "Could not resolve address for '${name}'. Is Tailscale up inside the container?"
+    fi
+
+    log "Starting Cloudflare Tunnel for '${name}' → ${ts_hostname}:${port}..."
+    cloudflared tunnel --url "http://${ts_hostname}:${port}" > "$tunnel_log" 2>&1 &
+    local tunnel_pid=$!
+    echo "$tunnel_pid" > "$pid_file"
+
+    local tunnel_url="" attempts=0
+    while [[ $attempts -lt 20 ]]; do
+        sleep 2
+        tunnel_url=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' "$tunnel_log" 2>/dev/null | head -1 || true)
+        [[ -n "$tunnel_url" ]] && break
+        attempts=$(( attempts + 1 ))
+    done
+
+    if [[ -z "$tunnel_url" ]]; then
+        log "Warning: Could not detect tunnel URL. Check ${tunnel_log}."
+        tunnel_url="unknown"
+    fi
+
+    state_set_share "$name" "true" "$tunnel_url" "$port"
+
+    echo ""
+    echo "Tunnel active for '${name}'"
+    echo "  Public URL: ${tunnel_url}"
+    echo "  Forwarding: ${tunnel_url} → ${ts_hostname}:${port}"
+    echo ""
+    echo "To stop: devbox unshare ${name}"
+}
+
+cmd_unshare() {
+    local name="${1:-}"
+    [[ -n "$name" ]] || { _help_unshare; return 1; }
+    [[ "$name" == "--help" || "$name" == "-h" ]] && { _help_unshare; return 0; }
+
+    mkdir -p "$LOG_DIR"
+    local pid_file="${LOG_DIR}/tunnel-${name}.pid"
+
+    if [[ -f "$pid_file" ]]; then
+        local pid
+        pid=$(cat "$pid_file")
+        kill "$pid" 2>/dev/null && log "Tunnel stopped." || log "Warning: Process ${pid} not found."
+        rm -f "$pid_file"
+    else
+        log "No active tunnel found for '${name}'."
+    fi
+
+    state_set_share "$name" "false" "" 3000
+    echo "devbox '${name}' unshared."
+}
+
+cmd_upgrade() {
+    local all=false names=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --all)     all=true; shift ;;
+            --help|-h) _help_upgrade; return 0 ;;
+            -*)        die "Unknown flag: $1" ;;
+            *)         names+=("$1"); shift ;;
+        esac
+    done
+
+    if $all; then
+        [[ ${#names[@]} -eq 0 ]] || die "--all takes no name arguments"
+        while IFS= read -r container_name; do
+            names+=("${container_name#devbox-}")
+        done < <(docker ps -a --filter 'name=devbox-' --format '{{.Names}}' 2>/dev/null || true)
+        [[ ${#names[@]} -gt 0 ]] || { echo "No devboxes found."; return 0; }
+    else
+        [[ ${#names[@]} -gt 0 ]] || { _help_upgrade; return 1; }
+    fi
+
+    load_config
+
+    local failed=() succeeded=()
+    for name in "${names[@]}"; do
+        echo "── ${name}"
+        if _upgrade_one "$name"; then
+            succeeded+=("$name")
+        else
+            failed+=("$name")
+            log "Upgrade of '${name}' failed or was skipped."
+        fi
+        echo ""
+    done
+
+    if [[ ${#names[@]} -gt 1 ]]; then
+        echo "Done."
+        [[ ${#succeeded[@]} -gt 0 ]] && echo "  OK:     ${succeeded[*]}"
+        [[ ${#failed[@]} -gt 0 ]]    && echo "  Skipped/failed: ${failed[*]}"
+    fi
+}
+
+# Files that can be synced into a running container without full recreate.
+# "no-restart"   — takes effect immediately (read fresh each use)
+# "needs-restart" — takes effect after container restart (running as a daemon)
+_safe_file_restart_mode() {
+    case "$1" in
+        /usr/local/bin/idle-detect) echo "needs-restart" ;;
+        *)                          echo "no-restart" ;;
+    esac
+}
+
+SAFE_FILES=(
+    "/root/CLAUDE.md"
+    "/usr/local/bin/idle-detect"
+    "/usr/local/bin/install-claude-code"
+)
+
+# Compare the running container against the current devbox-base image.
+# Prints one of: current | safe-only | unsafe
+# Also populates UPGRADE_CHANGED_SAFE (array) and UPGRADE_NEEDS_RESTART (bool).
+_analyze_changes() {
+    local name="$1" container="devbox-${name}"
+    UPGRADE_CHANGED_SAFE=()
+    UPGRADE_NEEDS_RESTART=false
+
+    local current_image_id running_image_id
+    current_image_id=$(docker inspect devbox-base --format '{{.Id}}' 2>/dev/null) || {
+        err "devbox-base image not found. Run: deploy.sh --image-only"
+        return 1
+    }
+    running_image_id=$(docker inspect "$container" --format '{{.Image}}' 2>/dev/null) || return 1
+
+    if [[ "$current_image_id" == "$running_image_id" ]]; then
+        echo "current"
+        return 0
+    fi
+
+    # Create a temporary container from the new image to extract files for comparison
+    local temp tmpdir
+    temp=$(docker create devbox-base /bin/true 2>/dev/null) || {
+        err "Could not create temp container from devbox-base"
+        return 1
+    }
+    tmpdir=$(mktemp -d)
+    # shellcheck disable=SC2064
+    trap "docker rm -f '$temp' >/dev/null 2>&1; rm -rf '$tmpdir'" RETURN
+
+    # Compare package manifests to detect system-level changes (new apt installs, etc.)
+    local packages_changed=false
+    docker cp "${temp}:/etc/devbox-manifest" "${tmpdir}/new-manifest" 2>/dev/null || true
+    docker exec "$container" cat /etc/devbox-manifest > "${tmpdir}/old-manifest" 2>/dev/null || true
+    if ! diff -q "${tmpdir}/new-manifest" "${tmpdir}/old-manifest" >/dev/null 2>&1; then
+        packages_changed=true
+    fi
+
+    # Compare each safe file between the new image and the running container
+    for file in "${SAFE_FILES[@]}"; do
+        local fname
+        fname=$(basename "$file")
+        docker cp "${temp}:${file}" "${tmpdir}/new-${fname}" 2>/dev/null || continue
+        docker cp "${container}:${file}" "${tmpdir}/old-${fname}" 2>/dev/null || {
+            # File doesn't exist in old container (new addition) — counts as safe change
+            UPGRADE_CHANGED_SAFE+=("$file")
+            continue
+        }
+        if ! diff -q "${tmpdir}/new-${fname}" "${tmpdir}/old-${fname}" >/dev/null 2>&1; then
+            UPGRADE_CHANGED_SAFE+=("$file")
+            [[ "$(_safe_file_restart_mode "$file")" == "needs-restart" ]] && UPGRADE_NEEDS_RESTART=true
+        fi
+    done
+
+    if $packages_changed; then
+        echo "unsafe"
+    elif [[ ${#UPGRADE_CHANGED_SAFE[@]} -gt 0 ]]; then
+        echo "safe-only"
+    else
+        echo "no-tracked-changes"
+    fi
+}
+
+# Copy specific files from the current devbox-base image into a running container
+_sync_files() {
+    local name="$1" container="devbox-${name}"
+    shift
+    local files=("$@")
+
+    local temp tmpdir
+    temp=$(docker create devbox-base /bin/true 2>/dev/null) || {
+        err "Could not create temp container from devbox-base"
+        return 1
+    }
+    tmpdir=$(mktemp -d)
+    trap "docker rm -f '$temp' >/dev/null 2>&1; rm -rf '$tmpdir'" RETURN
+
+    for file in "${files[@]}"; do
+        local fname
+        fname=$(basename "$file")
+        docker cp "${temp}:${file}" "${tmpdir}/${fname}" 2>/dev/null && \
+        docker cp "${tmpdir}/${fname}" "${container}:${file}" 2>/dev/null && \
+            echo "  synced: ${file}" || \
+            log "Warning: could not sync ${file}"
+    done
+}
+
+# Full destroy + recreate from the new image, preserving data and restoring state
+_full_recreate() {
+    local name="$1" container="devbox-${name}"
+
+    local status was_running=false was_shared=false share_port=3000
+    status=$(docker inspect "$container" --format '{{.State.Status}}')
+    [[ "$status" == "running" ]] && was_running=true
+
+    local share_active
+    share_active=$(state_get "$name" '.share.active // false')
+    if [[ "$share_active" == "true" ]]; then
+        was_shared=true
+        share_port=$(state_get "$name" '.share.port // 80')
+        cmd_unshare "$name" 2>/dev/null || true
+    fi
+
+    [[ "$status" == "running" ]] && docker stop "$container"
+    docker rm "$container"
+    remove_tailscale_node "$name"
+
+    if ! $was_running; then
+        echo "  '${name}' was stopped — new image will be used on next start."
+        return 0
+    fi
+
+    local pinned idle_timeout=30
+    pinned=$(state_get "$name" '.pinned // false')
+    [[ "$pinned" == "true" ]] && idle_timeout=0
+
+    local ts_auth_key ssh_pubkey=""
+    ts_auth_key=$(generate_tailscale_key)
+    [[ -n "${DEVBOX_SSH_PUBKEY:-}" ]] && ssh_pubkey="$DEVBOX_SSH_PUBKEY"
+    [[ -z "$ssh_pubkey" && -f "$SSH_PUBKEY_FILE" ]] && ssh_pubkey=$(cat "$SSH_PUBKEY_FILE")
+
+    docker run -d \
+        --name "$container" \
+        --hostname "$name" \
+        --cap-add=NET_ADMIN \
+        --device=/dev/net/tun \
+        -v "${DATA_ROOT}/${name}:/workspace" \
+        -e "TAILSCALE_AUTH_KEY=${ts_auth_key}" \
+        -e "DEVBOX_IDLE_TIMEOUT=${idle_timeout}" \
+        -e "DEVBOX_NAME=${name}" \
+        -e "DEVBOX_SSH_PUBKEY=${ssh_pubkey}" \
+        "$DEVBOX_IMAGE"
+
+    if $was_shared; then
+        sleep 5
+        cmd_share "$name" --port "$share_port" 2>/dev/null || \
+            log "Warning: Could not restart tunnel. Run: devbox share ${name} --port ${share_port}"
+    fi
+
+    _print_connection_info "$name"
+}
+
+_upgrade_one() {
+    local name="$1" container="devbox-${name}"
+    docker inspect "$container" &>/dev/null || { err "No devbox named '${name}'."; return 1; }
+
+    echo -n "  Analyzing changes... "
+    local change_type
+    change_type=$(_analyze_changes "$name") || return 1
+
+    case "$change_type" in
+        current)
+            echo "already up to date."
+            return 0
+            ;;
+
+        no-tracked-changes)
+            # Image ID changed (probably a rebuild) but nothing we track differs.
+            # Treat as safe-only with nothing to do, but mention it.
+            echo "image rebuilt, no file changes detected. Nothing to sync."
+            return 0
+            ;;
+
+        safe-only)
+            # Only known-safe files changed — sync in place, no prompt needed
+            echo "safe files changed:"
+            for f in "${UPGRADE_CHANGED_SAFE[@]}"; do
+                local note=""
+                [[ "$(_safe_file_restart_mode "$f")" == "needs-restart" ]] && note=" (needs restart)"
+                echo "    ~ $(basename "$f")${note}"
+            done
+            _sync_files "$name" "${UPGRADE_CHANGED_SAFE[@]}"
+
+            if $UPGRADE_NEEDS_RESTART; then
+                echo ""
+                echo -n "  Some changes take effect after a restart. Restart now? [Y/n] "
+                local answer
+                read -r answer
+                if [[ "${answer,,}" != "n" ]]; then
+                    docker restart "$container"
+                    echo "  Restarted."
+                fi
+            fi
+            ;;
+
+        unsafe)
+            # System-level changes (packages, etc.) — prompt with three options
+            echo "system changes detected (packages or other layers changed)."
+            echo ""
+            if [[ ${#UPGRADE_CHANGED_SAFE[@]} -gt 0 ]]; then
+                echo "  Safe files also changed:"
+                for f in "${UPGRADE_CHANGED_SAFE[@]}"; do
+                    echo "    ~ $(basename "$f")"
+                done
+                echo ""
+            fi
+            echo "  How would you like to upgrade '${name}'?"
+            echo "    1) In-place file sync  (safe files only — system changes not applied)"
+            echo "    2) Full recreate       (destroy + create from new image — data preserved)"
+            echo "    3) Skip"
+            echo ""
+            echo -n "  Choice [1]: "
+            local choice
+            read -r choice
+            choice="${choice:-1}"
+
+            case "$choice" in
+                1)
+                    if [[ ${#UPGRADE_CHANGED_SAFE[@]} -gt 0 ]]; then
+                        _sync_files "$name" "${UPGRADE_CHANGED_SAFE[@]}"
+                        if $UPGRADE_NEEDS_RESTART; then
+                            echo -n "  Restart container for daemon changes? [Y/n] "
+                            local r; read -r r
+                            [[ "${r,,}" != "n" ]] && docker restart "$container" && echo "  Restarted."
+                        fi
+                    else
+                        echo "  No safe files to sync."
+                    fi
+                    ;;
+                2)
+                    _full_recreate "$name"
+                    ;;
+                3)
+                    echo "  Skipped."
+                    return 1
+                    ;;
+                *)
+                    echo "  Invalid choice. Skipped."
+                    return 1
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+cmd_pin() {
+    local name="${1:-}"
+    [[ -n "$name" ]] || { _help_pin; return 1; }
+    [[ "$name" == "--help" || "$name" == "-h" ]] && { _help_pin; return 0; }
+
+    local current
+    current=$(state_get "$name" '.pinned // false')
+    local new_val
+    [[ "$current" == "true" ]] && new_val="false" || new_val="true"
+
+    state_set "$name" "pinned" "$new_val"
+
+    if [[ "$new_val" == "true" ]]; then
+        echo "devbox '${name}' pinned — will not auto-stop."
+    else
+        echo "devbox '${name}' unpinned — idle detection active."
+    fi
+}
+
+# ── Help ──────────────────────────────────────────────────────────────────────
+
+cmd_help() {
+    local subcmd="${1:-}"
+    case "$subcmd" in
+        create)  _help_create;  return ;;
+        start)   _help_create;  return ;;
+        stop)    _help_stop;    return ;;
+        destroy) _help_destroy; return ;;
+        share)   _help_share;   return ;;
+        unshare) _help_unshare; return ;;
+        pin)     _help_pin;     return ;;
+        upgrade) _help_upgrade; return ;;
+        list|ls) _help_list;    return ;;
+    esac
+
+    cat <<EOF
+devbox — manage devbox containers
+
+Usage:
+  devbox <command> [args]
+
+Commands:
+  list                     List all devboxes and their status
+  create [name]            Create a new devbox (or resume if stopped)
+  start <name>             Resume a stopped devbox
+  stop <name>              Stop a running devbox
+  destroy <name>           Remove a devbox container (data preserved)
+  share <name>             Expose a devbox publicly via Cloudflare Tunnel
+  unshare <name>           Stop the Cloudflare Tunnel for a devbox
+  pin <name>               Toggle pin state (pinned devboxes never auto-stop)
+  upgrade <name>|--all     Recreate devbox(es) from the current base image
+
+  help [command]           Show help for a command
+
+Run 'devbox help <command>' for details on a specific command.
+EOF
+}
+
+_help_create() { cat <<EOF
+Usage: devbox create [name] [--pin] [--timeout <minutes>]
+
+Create a new devbox, or resume an existing stopped one.
+
+If no name is given, a random <adjective>-<noun> name is generated.
+
+Options:
+  --pin               Pin the devbox (never auto-stops)
+  --timeout <min>     Idle timeout in minutes (default: 30, 0 = pinned)
+  --help              Show this message
+
+Examples:
+  devbox create
+  devbox create myproject
+  devbox create --pin myserver
+  devbox create --timeout 60 myproject
+EOF
+}
+
+_help_stop() { cat <<EOF
+Usage: devbox stop <name>
+
+Stop a running devbox. Data is preserved. Resume with 'devbox start <name>'.
+EOF
+}
+
+_help_destroy() { cat <<EOF
+Usage: devbox destroy <name>
+
+Stop and remove a devbox container. The Tailscale node is removed from your
+tailnet. Data in ${DATA_ROOT}/<name>/ is always preserved.
+
+To also delete data:
+  rm -rf ${DATA_ROOT}/<name>/
+EOF
+}
+
+_help_share() { cat <<EOF
+Usage: devbox share <name> [--port <port>]
+
+Expose a running devbox publicly via a Cloudflare Tunnel.
+Requires cloudflared installed on the host.
+
+Options:
+  --port <port>    Port to forward (default: 3000)
+  --help           Show this message
+
+The tunnel connects via the devbox's MagicDNS hostname (stable across
+recreates). The public URL is printed and stored in state for the webapp.
+Stop the tunnel with: devbox unshare <name>
+EOF
+}
+
+_help_unshare() { cat <<EOF
+Usage: devbox unshare <name>
+
+Stop the active Cloudflare Tunnel for a devbox.
+EOF
+}
+
+_help_upgrade() { cat <<EOF
+Usage: devbox upgrade <name> [<name> ...]
+       devbox upgrade --all
+
+Upgrade one or more devboxes to the current devbox-base image.
+
+devbox upgrade is smart about what changed:
+
+  Safe-files-only change (e.g. CLAUDE.md updated):
+    Syncs changed files directly into the running container. No restart
+    required for most files; some (like idle-detect) prompt for a restart.
+    No data risk, no Tailscale disruption.
+
+  System-level change (e.g. new apt packages in Dockerfile):
+    Prompts with three options:
+      1) In-place file sync  — apply only the safe file changes
+      2) Full recreate       — destroy + create from new image (data preserved)
+      3) Skip
+
+Safe files (can always be synced in place):
+  /root/CLAUDE.md
+  /usr/local/bin/idle-detect
+  /usr/local/bin/install-claude-code
+
+Anything installed outside /workspace (apt packages, global npm installs, etc.)
+lives in the container layer and requires a full recreate to update.
+
+Options:
+  --all     Upgrade all devboxes
+  --help    Show this message
+EOF
+}
+
+_help_pin() { cat <<EOF
+Usage: devbox pin <name>
+
+Toggle the pin state of a devbox. Pinned devboxes never auto-stop due to
+idle detection. Unpinned devboxes stop after DEVBOX_IDLE_TIMEOUT minutes
+of inactivity (default: 30m).
+
+Note: The idle timeout change takes effect on the next start.
+EOF
+}
+
+_help_list() { cat <<EOF
+Usage: devbox list
+
+List all devboxes with their status, pin state, and share URL.
+EOF
+}
+
+# ── Shared output ─────────────────────────────────────────────────────────────
+
+_print_connection_info() {
+    local name="$1"
+    log "Waiting for Tailscale IP..."
+    local ts_ip
+    ts_ip=$(wait_for_tailscale_ip "$name")
+    [[ -z "$ts_ip" ]] && ts_ip="unknown (still connecting)"
+
+    local pinned
+    pinned=$(state_get "$name" '.pinned // false')
+
+    echo ""
+    echo "devbox '${name}' is ready"
+    echo "  ssh root@${name}"
+    echo "  Tailscale IP: ${ts_ip}"
+    echo "  Data: ${DATA_ROOT}/${name}"
+    [[ "$pinned" == "true" ]] \
+        && echo "  Pinned: yes (will not auto-stop)" \
+        || echo "  Idle timeout: ${DEVBOX_IDLE_TIMEOUT:-30}m"
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+
+COMMAND="${1:-}"
+[[ $# -gt 0 ]] && shift || true
+
+case "$COMMAND" in
+    list|ls)            cmd_list    "$@" ;;
+    create)             cmd_create  "$@" ;;
+    start)              cmd_create  "$@" ;;  # alias — same behavior, explicit intent
+    stop)               cmd_stop    "$@" ;;
+    destroy)            cmd_destroy "$@" ;;
+    share)              cmd_share   "$@" ;;
+    unshare)            cmd_unshare "$@" ;;
+    pin)                cmd_pin     "$@" ;;
+    upgrade)            cmd_upgrade "$@" ;;
+    help|--help|-h)     cmd_help    "$@" ;;
+    "")                 cmd_help;   exit 1 ;;
+    *)  err "unknown command: '${COMMAND}'"; echo "Run 'devbox help' for usage." >&2; exit 1 ;;
+esac

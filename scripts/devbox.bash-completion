@@ -1,0 +1,57 @@
+# bash completion for devbox
+# Install: cp devbox.bash-completion /etc/bash_completion.d/devbox
+#   or source it from ~/.bashrc
+
+_devbox_names() {
+    docker ps -a --filter 'name=devbox-' --format '{{.Names}}' 2>/dev/null \
+        | sed 's/^devbox-//'
+}
+
+_devbox() {
+    local cur prev words cword
+    _init_completion 2>/dev/null || {
+        COMPREPLY=()
+        cur="${COMP_WORDS[COMP_CWORD]}"
+        prev="${COMP_WORDS[COMP_CWORD-1]}"
+        words=("${COMP_WORDS[@]}")
+        cword=$COMP_CWORD
+    }
+
+    local subcommands="list ls create start stop destroy share unshare pin upgrade help"
+
+    # Complete subcommand
+    if [[ $cword -eq 1 ]]; then
+        COMPREPLY=($(compgen -W "$subcommands" -- "$cur"))
+        return
+    fi
+
+    local subcommand="${words[1]}"
+
+    case "$subcommand" in
+        start|stop|destroy|share|unshare|pin|upgrade)
+            COMPREPLY=($(compgen -W "$(_devbox_names)" -- "$cur"))
+            ;;
+        share)
+            case "$prev" in
+                --port) ;;  # no completion for port numbers
+                *)
+                    if [[ "$cur" == --* ]]; then
+                        COMPREPLY=($(compgen -W "--port" -- "$cur"))
+                    else
+                        COMPREPLY=($(compgen -W "$(_devbox_names)" -- "$cur"))
+                    fi
+                    ;;
+            esac
+            ;;
+        create)
+            if [[ "$cur" == --* ]]; then
+                COMPREPLY=($(compgen -W "--pin --timeout" -- "$cur"))
+            fi
+            ;;
+        help)
+            COMPREPLY=($(compgen -W "$subcommands" -- "$cur"))
+            ;;
+    esac
+}
+
+complete -F _devbox devbox

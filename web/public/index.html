@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>devbox</title>
+  <style>
+    :root {
+      --bg:       #0d1117;
+      --bg2:      #161b22;
+      --bg3:      #21262d;
+      --border:   #30363d;
+      --text:     #e6edf3;
+      --muted:    #8b949e;
+      --green:    #3fb950;
+      --yellow:   #d29922;
+      --red:      #f85149;
+      --blue:     #58a6ff;
+      --purple:   #bc8cff;
+      --orange:   #ffa657;
+      --font:     'SF Mono', 'Fira Mono', 'Cascadia Code', 'Consolas', monospace;
+      --radius:   6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 13px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── Layout ── */
+    header {
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .header-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: 0.02em;
+    }
+
+    .header-title span { color: var(--muted); font-weight: 400; }
+
+    .header-meta {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    main {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px 16px;
+    }
+
+    /* ── Toolbar ── */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-right {
+      margin-left: auto;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    /* ── Buttons ── */
+    button {
+      font-family: var(--font);
+      font-size: 12px;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 5px 12px;
+      background: var(--bg3);
+      color: var(--text);
+      transition: background 0.1s, border-color 0.1s;
+      white-space: nowrap;
+    }
+
+    button:hover { background: var(--border); }
+    button:active { opacity: 0.8; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    button.primary {
+      background: var(--green);
+      border-color: var(--green);
+      color: #000;
+      font-weight: 600;
+    }
+    button.primary:hover { background: #4dbb5a; border-color: #4dbb5a; }
+
+    button.danger {
+      color: var(--red);
+      border-color: var(--red);
+    }
+    button.danger:hover { background: rgba(248, 81, 73, 0.15); }
+
+    button.small {
+      font-size: 11px;
+      padding: 3px 8px;
+    }
+
+    /* ── New devbox form ── */
+    .new-form {
+      display: none;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      margin-bottom: 16px;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .new-form.open { display: flex; }
+
+    .new-form label {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .new-form input[type="text"] {
+      font-family: var(--font);
+      font-size: 12px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 5px 10px;
+      width: 200px;
+      outline: none;
+    }
+
+    .new-form input[type="text"]:focus {
+      border-color: var(--blue);
+    }
+
+    .new-form input::placeholder { color: var(--muted); }
+
+    /* ── Devbox list ── */
+    #devbox-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .devbox-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      transition: border-color 0.15s;
+    }
+
+    .devbox-card:hover { border-color: #40464e; }
+
+    .devbox-card.status-running { border-left: 3px solid var(--green); }
+    .devbox-card.status-exited  { border-left: 3px solid var(--muted); }
+    .devbox-card.status-created { border-left: 3px solid var(--yellow); }
+
+    .card-top {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .devbox-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      min-width: 0;
+    }
+
+    .badges {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 10px;
+      border: 1px solid;
+      white-space: nowrap;
+    }
+
+    .badge-running { color: var(--green);  border-color: rgba(63,185,80,.4);  background: rgba(63,185,80,.08); }
+    .badge-stopped { color: var(--muted);  border-color: rgba(139,148,158,.3); background: rgba(139,148,158,.06); }
+    .badge-pinned  { color: var(--yellow); border-color: rgba(210,153,34,.4);  background: rgba(210,153,34,.08); }
+    .badge-shared  { color: var(--purple); border-color: rgba(188,140,255,.4); background: rgba(188,140,255,.08); }
+
+    .card-stats {
+      display: flex;
+      gap: 14px;
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+
+    .stat { display: flex; gap: 4px; align-items: center; }
+    .stat-val { color: var(--text); }
+
+    .share-url {
+      font-size: 11px;
+      color: var(--blue);
+      text-decoration: none;
+      margin-top: 6px;
+      display: inline-block;
+      word-break: break-all;
+    }
+
+    .share-url:hover { text-decoration: underline; }
+
+    .card-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    /* ── Empty state ── */
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      padding: 60px 20px;
+      font-size: 13px;
+    }
+
+    .empty strong { display: block; font-size: 16px; margin-bottom: 8px; color: var(--text); }
+
+    /* ── Toast / notification ── */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 20px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      font-size: 12px;
+      color: var(--text);
+      max-width: 320px;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+      z-index: 100;
+      word-break: break-word;
+    }
+
+    #toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    #toast.toast-error { border-color: var(--red); color: var(--red); }
+    #toast.toast-ok    { border-color: var(--green); }
+
+    /* ── Refresh indicator ── */
+    .refresh-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      display: inline-block;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .refresh-dot.pulse { opacity: 1; }
+
+    /* ── Loading spinner ── */
+    .spinner {
+      display: inline-block;
+      width: 12px; height: 12px;
+      border: 2px solid var(--border);
+      border-top-color: var(--text);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Confirm overlay ── */
+    #confirm-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 50;
+      align-items: center;
+      justify-content: center;
+    }
+    #confirm-overlay.open { display: flex; }
+
+    .confirm-box {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      max-width: 360px;
+      width: 90%;
+    }
+
+    .confirm-box p { color: var(--text); margin-bottom: 16px; line-height: 1.5; }
+    .confirm-box .confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+    /* ── Mobile ── */
+    @media (max-width: 600px) {
+      header { padding: 10px 14px; }
+      main { padding: 14px 10px; }
+      .devbox-name { font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-title">devbox</div>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <span class="refresh-dot" id="refresh-dot"></span>
+    <span class="header-meta" id="last-updated">—</span>
+  </div>
+</header>
+
+<main>
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <button class="primary" id="btn-new">+ New Devbox</button>
+    <div class="toolbar-right">
+      <button id="btn-refresh" title="Refresh">↺ Refresh</button>
+    </div>
+  </div>
+
+  <!-- New devbox form -->
+  <div class="new-form" id="new-form">
+    <label for="new-name">Name (optional):</label>
+    <input type="text" id="new-name" placeholder="e.g. clever-otter" autocomplete="off" spellcheck="false" />
+    <button class="primary" id="btn-create-submit">Create</button>
+    <button id="btn-create-cancel">Cancel</button>
+  </div>
+
+  <!-- Devbox list -->
+  <div id="devbox-list">
+    <div class="empty"><span class="spinner"></span></div>
+  </div>
+</main>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- Confirm overlay -->
+<div id="confirm-overlay">
+  <div class="confirm-box">
+    <p id="confirm-message"></p>
+    <div class="confirm-actions">
+      <button id="confirm-cancel">Cancel</button>
+      <button class="danger" id="confirm-ok">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  'use strict';
+
+  // ── State ──────────────────────────────────────────────────────────────────
+
+  let devboxes = [];
+  let refreshTimer = null;
+  const REFRESH_INTERVAL = 5000; // ms
+
+  // ── DOM refs ───────────────────────────────────────────────────────────────
+
+  const listEl        = document.getElementById('devbox-list');
+  const toastEl       = document.getElementById('toast');
+  const refreshDot    = document.getElementById('refresh-dot');
+  const lastUpdatedEl = document.getElementById('last-updated');
+  const newForm       = document.getElementById('new-form');
+  const newNameInput  = document.getElementById('new-name');
+  const confirmOverlay = document.getElementById('confirm-overlay');
+  const confirmMsg     = document.getElementById('confirm-message');
+  const confirmOk      = document.getElementById('confirm-ok');
+  const confirmCancel  = document.getElementById('confirm-cancel');
+
+  // ── Toast ──────────────────────────────────────────────────────────────────
+
+  let toastTimer = null;
+  function showToast(msg, isError = false) {
+    toastEl.textContent = msg;
+    toastEl.className = 'show ' + (isError ? 'toast-error' : 'toast-ok');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.className = ''; }, 3500);
+  }
+
+  // ── Confirm dialog ─────────────────────────────────────────────────────────
+
+  function confirm(message) {
+    return new Promise((resolve) => {
+      confirmMsg.textContent = message;
+      confirmOverlay.classList.add('open');
+      const cleanup = (result) => {
+        confirmOverlay.classList.remove('open');
+        confirmOk.removeEventListener('click', onOk);
+        confirmCancel.removeEventListener('click', onCancel);
+        resolve(result);
+      };
+      const onOk     = () => cleanup(true);
+      const onCancel = () => cleanup(false);
+      confirmOk.addEventListener('click', onOk);
+      confirmCancel.addEventListener('click', onCancel);
+    });
+  }
+
+  // ── API ────────────────────────────────────────────────────────────────────
+
+  async function api(method, path, body) {
+    const opts = {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+    };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const res = await fetch('/api' + path, opts);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
+
+  // ── Fetch and render devboxes ──────────────────────────────────────────────
+
+  async function fetchDevboxes() {
+    refreshDot.classList.add('pulse');
+    try {
+      devboxes = await api('GET', '/devboxes');
+      renderList(devboxes);
+      lastUpdatedEl.textContent = new Date().toLocaleTimeString();
+    } catch (e) {
+      console.error('Failed to fetch devboxes:', e);
+      if (listEl.innerHTML.includes('spinner')) {
+        listEl.innerHTML = `<div class="empty"><strong>Could not connect</strong>${e.message}</div>`;
+      }
+    } finally {
+      setTimeout(() => refreshDot.classList.remove('pulse'), 300);
+    }
+  }
+
+  function scheduleRefresh() {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(async () => {
+      await fetchDevboxes();
+      scheduleRefresh();
+    }, REFRESH_INTERVAL);
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  function renderList(boxes) {
+    if (!boxes.length) {
+      listEl.innerHTML = `<div class="empty"><strong>No devboxes yet</strong>Click "+ New Devbox" to create one.</div>`;
+      return;
+    }
+
+    // Sort: running first, then alphabetical
+    const sorted = [...boxes].sort((a, b) => {
+      if (a.status === 'running' && b.status !== 'running') return -1;
+      if (a.status !== 'running' && b.status === 'running') return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    listEl.innerHTML = sorted.map(renderCard).join('');
+    attachCardListeners();
+  }
+
+  function renderCard(box) {
+    const isRunning = box.status === 'running';
+    const statusClass = `status-${box.status === 'exited' ? 'exited' : box.status}`;
+
+    const badges = [];
+    if (isRunning) badges.push(`<span class="badge badge-running">running</span>`);
+    else           badges.push(`<span class="badge badge-stopped">stopped</span>`);
+    if (box.pinned) badges.push(`<span class="badge badge-pinned">📌 pinned</span>`);
+    if (box.share?.active) badges.push(`<span class="badge badge-shared">🌐 shared</span>`);
+
+    const statsHtml = isRunning ? `
+      <div class="card-stats">
+        <span class="stat">CPU <span class="stat-val">${box.cpu.toFixed(1)}%</span></span>
+        <span class="stat">RAM <span class="stat-val">${box.memMB} MB</span>${box.memLimitMB > 0 && box.memLimitMB < 900000 ? ` / ${box.memLimitMB} MB` : ''}</span>
+      </div>` : '';
+
+    const shareUrlHtml = box.share?.active && box.share.url
+      ? `<a class="share-url" href="${box.share.url}" target="_blank" rel="noopener">${box.share.url}</a>`
+      : '';
+
+    const actions = [];
+    if (!isRunning) {
+      actions.push(`<button class="small action-start" data-name="${box.name}">Start</button>`);
+    } else {
+      actions.push(`<button class="small action-stop" data-name="${box.name}">Stop</button>`);
+    }
+    actions.push(`<button class="small action-pin" data-name="${box.name}">${box.pinned ? 'Unpin' : 'Pin'}</button>`);
+
+    if (isRunning && !box.share?.active) {
+      actions.push(`<button class="small action-share" data-name="${box.name}">Share</button>`);
+    }
+    if (box.share?.active) {
+      actions.push(`<button class="small action-unshare" data-name="${box.name}">Unshare</button>`);
+    }
+    actions.push(`<button class="small danger action-destroy" data-name="${box.name}">Destroy</button>`);
+
+    return `
+      <div class="devbox-card ${statusClass}" data-name="${box.name}">
+        <div class="card-top">
+          <span class="devbox-name">${box.name}</span>
+          <div class="badges">${badges.join('')}</div>
+        </div>
+        ${statsHtml}
+        ${shareUrlHtml}
+        <div class="card-actions">${actions.join('')}</div>
+      </div>
+    `;
+  }
+
+  // ── Card action listeners ──────────────────────────────────────────────────
+
+  function attachCardListeners() {
+    listEl.addEventListener('click', handleCardAction, { once: true });
+  }
+
+  async function handleCardAction(e) {
+    const btn = e.target.closest('button[data-name]');
+    if (!btn) { attachCardListeners(); return; }
+
+    const name = btn.dataset.name;
+
+    // Disable all buttons in this card while action is in progress
+    const card = btn.closest('.devbox-card');
+    const buttons = card ? card.querySelectorAll('button') : [];
+    buttons.forEach(b => b.disabled = true);
+
+    try {
+      if (btn.classList.contains('action-start')) {
+        await api('POST', `/devboxes/${name}/start`);
+        showToast(`Starting ${name}…`);
+
+      } else if (btn.classList.contains('action-stop')) {
+        await api('POST', `/devboxes/${name}/stop`);
+        showToast(`Stopped ${name}`);
+
+      } else if (btn.classList.contains('action-pin')) {
+        const res = await api('POST', `/devboxes/${name}/pin`);
+        showToast(`${name} ${res.pinned ? 'pinned' : 'unpinned'}`);
+
+      } else if (btn.classList.contains('action-share')) {
+        showToast(`Starting tunnel for ${name}…`);
+        const res = await api('POST', `/devboxes/${name}/share`);
+        showToast(`Tunnel active: ${res.share?.url || 'check webapp'}`);
+
+      } else if (btn.classList.contains('action-unshare')) {
+        await api('DELETE', `/devboxes/${name}/share`);
+        showToast(`Tunnel stopped for ${name}`);
+
+      } else if (btn.classList.contains('action-destroy')) {
+        const ok = await confirm(`Destroy devbox "${name}"?\n\nThe container will be removed. Data at /data/devboxes/${name}/ is preserved.`);
+        if (!ok) {
+          buttons.forEach(b => b.disabled = false);
+          attachCardListeners();
+          return;
+        }
+        showToast(`Destroying ${name}…`);
+        await api('POST', `/devboxes/${name}/destroy`);
+        showToast(`Destroyed ${name}`);
+      }
+
+      await fetchDevboxes();
+      scheduleRefresh();
+    } catch (err) {
+      showToast(err.message, true);
+      buttons.forEach(b => b.disabled = false);
+    }
+
+    attachCardListeners();
+  }
+
+  // ── New devbox form ────────────────────────────────────────────────────────
+
+  document.getElementById('btn-new').addEventListener('click', () => {
+    newForm.classList.toggle('open');
+    if (newForm.classList.contains('open')) newNameInput.focus();
+  });
+
+  document.getElementById('btn-create-cancel').addEventListener('click', () => {
+    newForm.classList.remove('open');
+    newNameInput.value = '';
+  });
+
+  document.getElementById('btn-create-submit').addEventListener('click', createDevbox);
+  newNameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') createDevbox(); });
+
+  async function createDevbox() {
+    const name = newNameInput.value.trim() || undefined;
+    const btn = document.getElementById('btn-create-submit');
+    btn.disabled = true;
+    btn.textContent = 'Creating…';
+
+    try {
+      await api('POST', '/devboxes', name ? { name } : {});
+      showToast(name ? `Created ${name}` : 'Devbox created');
+      newForm.classList.remove('open');
+      newNameInput.value = '';
+      await fetchDevboxes();
+      scheduleRefresh();
+    } catch (err) {
+      showToast(err.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Create';
+    }
+  }
+
+  // ── Refresh button ─────────────────────────────────────────────────────────
+
+  document.getElementById('btn-refresh').addEventListener('click', async () => {
+    clearTimeout(refreshTimer);
+    await fetchDevboxes();
+    scheduleRefresh();
+  });
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+
+  fetchDevboxes().then(scheduleRefresh);
+</script>
+
+</body>
+</html>
