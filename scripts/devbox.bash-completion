@@ -22,7 +22,7 @@ _devbox() {
         cword=$COMP_CWORD
     }
 
-    local subcommands="list ls create start stop destroy share unshare pin upgrade help"
+    local subcommands="list ls create start stop destroy share unshare pin upgrade ssh code zed help"
 
     # Complete subcommand
     if [[ $cword -eq 1 ]]; then
@@ -33,7 +33,7 @@ _devbox() {
     local subcommand="${words[1]}"
 
     case "$subcommand" in
-        start|stop|destroy|share|unshare|pin|upgrade)
+        start|stop|destroy|share|unshare|pin|upgrade|ssh|code|zed)
             COMPREPLY=($(compgen -W "$(_devbox_names)" -- "$cur"))
             ;;
         share)

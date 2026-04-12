@@ -35,13 +35,16 @@ _devbox() {
                 'unshare:Stop the Cloudflare Tunnel for a devbox'
                 'pin:Toggle pin state (pinned devboxes never auto-stop)'
                 'upgrade:Recreate devbox(es) from the current base image'
+                'ssh:SSH into a devbox'
+                'code:Open a devbox in VSCode (Remote SSH)'
+                'zed:Open a devbox in Zed (remote)'
                 'help:Show help for a command'
             )
             _describe 'command' subcommands
             ;;
         args)
             case $words[2] in
-                start|stop|destroy|unshare|pin|upgrade)
+                start|stop|destroy|unshare|pin|upgrade|ssh|code|zed)
                     local devbox_names
                     devbox_names=($(_devbox_names))
                     _describe 'devbox name' devbox_names
