@@ -101,25 +101,21 @@ fi
 
 if $DO_SCRIPTS; then
     step "Installing devbox CLI to /usr/local/bin/ on server"
-    ssh "$DEVBOX_SERVER" env REMOTE_DIR="$REMOTE_DIR" bash <<'REMOTE'
+    # ssh -t allocates a TTY so sudo can prompt for a password interactively
+    ssh -t "$DEVBOX_SERVER" "
         set -e
-        cp "${REMOTE_DIR}/scripts/devbox" /usr/local/bin/devbox
-        chmod +x /usr/local/bin/devbox
-        echo "  installed: /usr/local/bin/devbox"
-
-        # bash completion
+        sudo install -m 0755 '${REMOTE_DIR}/scripts/devbox' /usr/local/bin/devbox
+        echo '  installed: /usr/local/bin/devbox'
         if [[ -d /etc/bash_completion.d ]]; then
-            cp "${REMOTE_DIR}/scripts/devbox.bash-completion" /etc/bash_completion.d/devbox
-            echo "  installed: /etc/bash_completion.d/devbox"
+            sudo install -m 0644 '${REMOTE_DIR}/scripts/devbox.bash-completion' /etc/bash_completion.d/devbox
+            echo '  installed: /etc/bash_completion.d/devbox'
         fi
-
-        # zsh completion
         ZSH_SITE_FUNCS=/usr/local/share/zsh/site-functions
-        if [[ -d "$ZSH_SITE_FUNCS" ]]; then
-            cp "${REMOTE_DIR}/scripts/devbox.zsh-completion" "${ZSH_SITE_FUNCS}/_devbox"
-            echo "  installed: ${ZSH_SITE_FUNCS}/_devbox"
+        if [[ -d \"\$ZSH_SITE_FUNCS\" ]]; then
+            sudo install -m 0644 '${REMOTE_DIR}/scripts/devbox.zsh-completion' \"\${ZSH_SITE_FUNCS}/_devbox\"
+            echo \"  installed: \${ZSH_SITE_FUNCS}/_devbox\"
         fi
-REMOTE
+    "
     log "CLI installed."
 fi
 
@@ -130,9 +126,9 @@ if $DO_WEB; then
     ssh "$DEVBOX_SERVER" "cd ${REMOTE_DIR}/web && npm install --omit=dev"
 
     step "Installing systemd service"
+    # Write service file to /tmp as current user (no sudo needed)
     ssh "$DEVBOX_SERVER" env DEPLOY_USER="$DEPLOY_USER" REMOTE_DIR="$REMOTE_DIR" bash <<'REMOTE'
-        set -e
-        cat > /etc/systemd/system/devbox-web.service <<EOF
+        cat > /tmp/devbox-web.service <<EOF
 [Unit]
 Description=Devbox Management Webapp
 After=network.target docker.service
@@ -151,11 +147,15 @@ Environment=PORT=4242
 [Install]
 WantedBy=multi-user.target
 EOF
-        systemctl daemon-reload
-        systemctl enable devbox-web
-        systemctl restart devbox-web
-        echo "  devbox-web service started."
 REMOTE
+    # Install service file and start with sudo (ssh -t for interactive password prompt)
+    ssh -t "$DEVBOX_SERVER" "
+        sudo mv /tmp/devbox-web.service /etc/systemd/system/devbox-web.service
+        sudo systemctl daemon-reload
+        sudo systemctl enable devbox-web
+        sudo systemctl restart devbox-web
+        echo '  devbox-web service started.'
+    "
     log "Webapp running on ${DEVBOX_SERVER}:4242"
 fi
 
