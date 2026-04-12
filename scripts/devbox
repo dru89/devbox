@@ -96,6 +96,7 @@ state_delete() {
 # Exchange OAuth client credentials for a short-lived API token.
 # OAuth clients don't expire (unlike API access tokens which cap at 90 days).
 # Create one at: Tailscale admin → Settings → Trust Credentials → OAuth Clients
+# Required grants: Keys → Auth Keys (write), Devices → Core (read + write)
 _tailscale_token() {
     [[ -n "${TAILSCALE_CLIENT_ID:-}"     ]] || die "TAILSCALE_CLIENT_ID not set in ${CONFIG_FILE}"
     [[ -n "${TAILSCALE_CLIENT_SECRET:-}" ]] || die "TAILSCALE_CLIENT_SECRET not set in ${CONFIG_FILE}"

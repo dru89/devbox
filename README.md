@@ -58,7 +58,9 @@ sudo mkdir -p /etc/devbox
 sudo tee /etc/devbox/config <<'EOF'
 # Tailscale OAuth client credentials — create at:
 #   Tailscale admin → Settings → Trust Credentials → OAuth Clients
-# Grant: Auth Keys (write) and Devices (read + write)
+# Required grants:
+#   Keys → Auth Keys (write)       — create ephemeral auth keys for new containers
+#   Devices → Core (read + write)  — list and remove devices on destroy
 # OAuth clients don't expire, unlike API access tokens.
 TAILSCALE_CLIENT_ID="..."
 TAILSCALE_CLIENT_SECRET="tskey-client-..."
