@@ -50,6 +50,8 @@ The alternative — routing through the host's Tailscale node — would mean all
 
 `devbox create` generates a new Tailscale ephemeral auth key (TTL: 5 minutes) via the API each time a container is created. Ephemeral keys register the device but don't persist in the Tailscale key list — the device is removed from the tailnet automatically if it goes offline and doesn't reconnect. This keeps the tailnet clean without requiring explicit cleanup.
 
+Authentication to the Tailscale API uses an **OAuth client** (`TAILSCALE_CLIENT_ID` + `TAILSCALE_CLIENT_SECRET` in `/etc/devbox/config`). The script exchanges these for a short-lived bearer token at call time. OAuth clients don't expire, unlike API access tokens which cap at 90 days.
+
 For resumed containers (existing container restarted), the Tailscale state is already on disk in the container's layer, so re-authentication isn't needed.
 
 ### Userspace networking
