@@ -6,6 +6,14 @@
 
 set -euo pipefail
 
+# ── Remote proxy ──────────────────────────────────────────────────────────────
+# If DEVBOX_HOST is set, forward all commands to that host over SSH.
+# Set this on your local machine to use devbox as if you were on the server:
+#   export DEVBOX_HOST=ds9   # in ~/.bashrc
+if [[ -n "${DEVBOX_HOST:-}" ]]; then
+    exec ssh "$DEVBOX_HOST" devbox "$@"
+fi
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 DEVBOX_IMAGE="${DEVBOX_IMAGE:-devbox-base}"

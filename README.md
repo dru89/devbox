@@ -135,7 +135,7 @@ This blocks all access to port 4242 except traffic arriving via the Tailscale in
 
 ## Deploy
 
-From your Mac (in the repo root):
+From your development machine (in the repo root):
 
 ```bash
 DEVBOX_SERVER=yourserver ./deploy.sh
@@ -157,6 +157,54 @@ DEVBOX_SERVER=yourserver ./deploy.sh --scripts      # reinstall CLI scripts only
 DEVBOX_SERVER=yourserver ./deploy.sh --web          # restart webapp only
 DEVBOX_SERVER=yourserver DEPLOY_USER=alice ./deploy.sh  # run webapp as a specific user
 ```
+
+---
+
+## Using devbox from your local machine
+
+You can run `devbox` commands from your laptop — not just from the server — by setting `DEVBOX_HOST`.
+
+### 1. Copy the script locally
+
+```bash
+cp scripts/devbox /usr/local/bin/devbox
+chmod +x /usr/local/bin/devbox
+```
+
+### 2. Set DEVBOX_HOST
+
+Add to your `~/.bashrc` (or `~/.zshrc`):
+
+```bash
+export DEVBOX_HOST=yourserver
+```
+
+Then `source ~/.bashrc` (or open a new terminal).
+
+With `DEVBOX_HOST` set, every `devbox` invocation is transparently forwarded via SSH:
+
+```bash
+devbox list           # lists devboxes on yourserver
+devbox create myapp   # creates devbox on yourserver
+devbox stop myapp     # stops it
+```
+
+### 3. Set up tab completion locally
+
+**bash** — add to `~/.bashrc`:
+
+```bash
+source /path/to/devbox/scripts/devbox.bash-completion
+```
+
+**zsh** — copy to your site-functions directory:
+
+```bash
+cp scripts/devbox.zsh-completion /usr/local/share/zsh/site-functions/_devbox
+autoload -U compinit && compinit
+```
+
+Tab completion is `DEVBOX_HOST`-aware: it SSHes to the server to fetch devbox names.
 
 ---
 

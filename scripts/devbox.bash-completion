@@ -3,8 +3,13 @@
 #   or source it from ~/.bashrc
 
 _devbox_names() {
-    docker ps -a --filter 'name=devbox-' --format '{{.Names}}' 2>/dev/null \
-        | sed 's/^devbox-//'
+    if [[ -n "${DEVBOX_HOST:-}" ]]; then
+        ssh "$DEVBOX_HOST" docker ps -a --filter 'name=devbox-' --format '{{.Names}}' 2>/dev/null \
+            | sed 's/^devbox-//'
+    else
+        docker ps -a --filter 'name=devbox-' --format '{{.Names}}' 2>/dev/null \
+            | sed 's/^devbox-//'
+    fi
 }
 
 _devbox() {

@@ -4,9 +4,15 @@
 #   then run: autoload -U compinit && compinit
 
 _devbox_names() {
-    local names
-    names=($(docker ps -a --filter 'name=devbox-' --format '{{.Names}}' 2>/dev/null | sed 's/^devbox-//'))
-    echo "${names[@]}"
+    if [[ -n "${DEVBOX_HOST:-}" ]]; then
+        local names
+        names=($(ssh "$DEVBOX_HOST" docker ps -a --filter 'name=devbox-' --format '{{.Names}}' 2>/dev/null | sed 's/^devbox-//'))
+        echo "${names[@]}"
+    else
+        local names
+        names=($(docker ps -a --filter 'name=devbox-' --format '{{.Names}}' 2>/dev/null | sed 's/^devbox-//'))
+        echo "${names[@]}"
+    fi
 }
 
 _devbox() {
