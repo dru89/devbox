@@ -72,6 +72,12 @@ TAILSCALE_TAILNET="yourname.ts.net"
 # (Optional) Override where SSH keys are sourced when creating devboxes
 # Defaults to $HOME/.ssh/authorized_keys of the user running devbox create
 # ssh_pubkey_file="/home/youruser/.ssh/authorized_keys"
+
+# (Optional) GitHub token — passed as GH_TOKEN into every devbox so the
+# gh CLI works without running 'gh auth login' each time.
+# Note: visible via 'docker inspect devbox-<name>'. Fine for a personal server.
+# Generate at: https://github.com/settings/tokens
+# DEVBOX_GITHUB_TOKEN="ghp_..."
 EOF
 sudo chmod 640 /etc/devbox/config
 sudo chown root:$(whoami) /etc/devbox/config
@@ -113,8 +119,8 @@ Make sure your access controls include at minimum these rules:
 // Your server can reach devboxes (needed for cloudflared tunnel proxying)
 {"action": "accept", "src": ["tag:server"], "dst": ["tag:devbox:*"]},
 
-// Devboxes can reach the internet (for apt, npm, pip, etc.)
-{"action": "accept", "src": ["tag:devbox"], "dst": ["*:80,443"]},
+// Devboxes can reach the internet (for apt, npm, pip, git/SSH, etc.)
+{"action": "accept", "src": ["tag:devbox"], "dst": ["*:80,443,22"]},
 ```
 
 **Note:** Tailscale ACLs are default-deny. Make sure you also have a rule covering `autogroup:self` so you can always reach your own devices. If you lose SSH access to a machine after editing ACLs, that's usually the culprit.

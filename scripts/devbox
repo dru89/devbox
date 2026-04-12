@@ -273,6 +273,9 @@ cmd_create() {
         log "Warning: No SSH public key found. Set DEVBOX_SSH_PUBKEY or populate ${SSH_PUBKEY_FILE}."
     fi
 
+    local gh_token_arg=()
+    [[ -n "${DEVBOX_GITHUB_TOKEN:-}" ]] && gh_token_arg=(-e "GH_TOKEN=${DEVBOX_GITHUB_TOKEN}")
+
     docker run -d \
         --name "$container" \
         --hostname "$name" \
@@ -284,6 +287,7 @@ cmd_create() {
         -e "DEVBOX_NAME=${name}" \
         -e "DEVBOX_USER=$(whoami)" \
         -e "DEVBOX_SSH_PUBKEY=${ssh_pubkey}" \
+        "${gh_token_arg[@]}" \
         "$DEVBOX_IMAGE"
 
     state_set "$name" "pinned" "$($pin && echo 'true' || echo 'false')"
@@ -615,6 +619,9 @@ _full_recreate() {
     [[ -n "${DEVBOX_SSH_PUBKEY:-}" ]] && ssh_pubkey="$DEVBOX_SSH_PUBKEY"
     [[ -z "$ssh_pubkey" && -f "$SSH_PUBKEY_FILE" ]] && ssh_pubkey=$(cat "$SSH_PUBKEY_FILE")
 
+    local gh_token_arg=()
+    [[ -n "${DEVBOX_GITHUB_TOKEN:-}" ]] && gh_token_arg=(-e "GH_TOKEN=${DEVBOX_GITHUB_TOKEN}")
+
     docker run -d \
         --name "$container" \
         --hostname "$name" \
@@ -626,6 +633,7 @@ _full_recreate() {
         -e "DEVBOX_NAME=${name}" \
         -e "DEVBOX_USER=$(whoami)" \
         -e "DEVBOX_SSH_PUBKEY=${ssh_pubkey}" \
+        "${gh_token_arg[@]}" \
         "$DEVBOX_IMAGE"
 
     if $was_shared; then
@@ -735,7 +743,7 @@ cmd_ssh() {
     [[ -n "$name" ]] || { echo "Usage: devbox ssh <name>"; return 1; }
     [[ "$name" == "--help" || "$name" == "-h" ]] && { echo "Usage: devbox ssh <name> [ssh args...]"; return 0; }
     shift
-    exec ssh "$(whoami)@${name}" "$@"
+    exec ssh -A "$(whoami)@${name}" "$@"
 }
 
 cmd_code() {
