@@ -99,36 +99,39 @@ fi
 
 # ── Install CLI scripts ───────────────────────────────────────────────────────
 
-if $DO_SCRIPTS; then
-    step "Installing devbox CLI to /usr/local/bin/ on server"
-    # ssh -t allocates a TTY so sudo can prompt for a password interactively
-    ssh -t "$DEVBOX_SERVER" "
-        set -e
-        sudo install -m 0755 '${REMOTE_DIR}/scripts/devbox' /usr/local/bin/devbox
-        echo '  installed: /usr/local/bin/devbox'
-        if [[ -d /etc/bash_completion.d ]]; then
-            sudo install -m 0644 '${REMOTE_DIR}/scripts/devbox.bash-completion' /etc/bash_completion.d/devbox
-            echo '  installed: /etc/bash_completion.d/devbox'
-        fi
-        ZSH_SITE_FUNCS=/usr/local/share/zsh/site-functions
-        if [[ -d \"\$ZSH_SITE_FUNCS\" ]]; then
-            sudo install -m 0644 '${REMOTE_DIR}/scripts/devbox.zsh-completion' \"\${ZSH_SITE_FUNCS}/_devbox\"
-            echo \"  installed: \${ZSH_SITE_FUNCS}/_devbox\"
-        fi
-    "
-    log "CLI installed."
-fi
-
-# ── Install and restart webapp ────────────────────────────────────────────────
-
 if $DO_WEB; then
     step "Installing webapp dependencies on server"
     ssh "$DEVBOX_SERVER" "cd ${REMOTE_DIR}/web && npm install --omit=dev"
+fi
 
-    step "Installing systemd service"
-    # Write service file to /tmp as current user (no sudo needed)
-    ssh "$DEVBOX_SERVER" env DEPLOY_USER="$DEPLOY_USER" REMOTE_DIR="$REMOTE_DIR" bash <<'REMOTE'
-        cat > /tmp/devbox-web.service <<EOF
+# ── Privileged installs (single ssh -t so sudo only prompts once) ─────────────
+
+if $DO_SCRIPTS || $DO_WEB; then
+    # Build a script locally from the enabled steps, then scp + execute it.
+    # All sudo calls happen in one SSH session so the credential cache applies.
+    PRIV_SCRIPT=$(mktemp)
+    echo "#!/usr/bin/env bash" >> "$PRIV_SCRIPT"
+    echo "set -e" >> "$PRIV_SCRIPT"
+
+    if $DO_SCRIPTS; then
+        cat >> "$PRIV_SCRIPT" <<EOF
+sudo install -m 0755 '${REMOTE_DIR}/scripts/devbox' /usr/local/bin/devbox
+echo '  installed: /usr/local/bin/devbox'
+if [[ -d /etc/bash_completion.d ]]; then
+    sudo install -m 0644 '${REMOTE_DIR}/scripts/devbox.bash-completion' /etc/bash_completion.d/devbox
+    echo '  installed: /etc/bash_completion.d/devbox'
+fi
+ZSH_SITE=/usr/local/share/zsh/site-functions
+if [[ -d "\$ZSH_SITE" ]]; then
+    sudo install -m 0644 '${REMOTE_DIR}/scripts/devbox.zsh-completion' "\${ZSH_SITE}/_devbox"
+    echo "  installed: \${ZSH_SITE}/_devbox"
+fi
+EOF
+    fi
+
+    if $DO_WEB; then
+        cat >> "$PRIV_SCRIPT" <<EOF
+sudo tee /etc/systemd/system/devbox-web.service > /dev/null <<'UNIT'
 [Unit]
 Description=Devbox Management Webapp
 After=network.target docker.service
@@ -146,17 +149,21 @@ Environment=PORT=4242
 
 [Install]
 WantedBy=multi-user.target
+UNIT
+sudo systemctl daemon-reload
+sudo systemctl enable devbox-web
+sudo systemctl restart devbox-web
+echo '  devbox-web service started.'
 EOF
-REMOTE
-    # Install service file and start with sudo (ssh -t for interactive password prompt)
-    ssh -t "$DEVBOX_SERVER" "
-        sudo mv /tmp/devbox-web.service /etc/systemd/system/devbox-web.service
-        sudo systemctl daemon-reload
-        sudo systemctl enable devbox-web
-        sudo systemctl restart devbox-web
-        echo '  devbox-web service started.'
-    "
-    log "Webapp running on ${DEVBOX_SERVER}:4242"
+    fi
+
+    step "Running privileged install steps on server"
+    scp -q "$PRIV_SCRIPT" "$DEVBOX_SERVER:/tmp/devbox-deploy-priv.sh"
+    rm "$PRIV_SCRIPT"
+    ssh -t "$DEVBOX_SERVER" "bash /tmp/devbox-deploy-priv.sh; rm /tmp/devbox-deploy-priv.sh"
+
+    $DO_SCRIPTS && log "CLI installed."
+    $DO_WEB    && log "Webapp running on ${DEVBOX_SERVER}:4242"
 fi
 
 echo ""
