@@ -41,7 +41,7 @@ Each container is a peer on your Tailscale network — reachable by name, indepe
 
 The alternative — routing through the host's Tailscale node — would mean all devboxes share one identity, one set of ACLs, and one revocation point. With individual nodes:
 
-- You can SSH directly to `ssh root@clever-otter` without any port-mapping or proxy
+- You can SSH directly to `ssh drew@clever-otter` without any port-mapping or proxy
 - ACLs apply per-devbox via `tag:devbox`
 - Destroying a devbox removes it from the tailnet cleanly
 - Tailscale's admin console shows each devbox as a distinct machine with last-seen time
@@ -176,7 +176,7 @@ The tunnel PID is stored in `/var/log/devbox/tunnel-<name>.pid` so `devbox unsha
 Some things this system intentionally doesn't do, and how you'd add them:
 
 **Multiple SSH users / team access**
-Add a `DEVBOX_SSH_PUBKEYS` env var that accepts multiple newline-separated keys. The entrypoint already appends to `authorized_keys`, so supporting multiple keys is a one-line change.
+Each devbox already creates a named user (`DEVBOX_USER`) with passwordless sudo, so the owner SSHes in as themselves rather than root. Supporting additional users would mean accepting multiple public keys via `DEVBOX_SSH_PUBKEYS` and creating additional user accounts in the entrypoint.
 
 **Persistent Cloudflare Tunnels with stable URLs**
 Replace the quick tunnel with a named tunnel using `cloudflared tunnel create` and a Cloudflare API token. The URL would be stable across restarts. Requires a Cloudflare account and a bit more config.

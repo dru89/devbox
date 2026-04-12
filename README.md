@@ -123,7 +123,7 @@ Make sure your access controls include at minimum these rules:
 - You can reach devboxes and your server directly
 - Your server can proxy cloudflared tunnels into devboxes via Tailscale
 - Devboxes can reach the internet but not each other or your LAN
-- You SSH into any devbox by name: `ssh root@clever-otter`
+- You SSH into any devbox by name: `ssh drew@clever-otter`
 
 ### 5. Lock down the management webapp to Tailscale only
 
@@ -239,9 +239,17 @@ devbox create --timeout 60 myproject # custom idle timeout
 Output:
 ```
 devbox 'clever-otter' is ready
-  ssh root@clever-otter
+  ssh drew@clever-otter
   Tailscale IP: 100.x.x.x
   Data: /data/devboxes/clever-otter
+```
+
+### Connecting
+
+```bash
+devbox ssh clever-otter          # SSH in as yourself
+devbox code clever-otter         # open in VSCode (Remote SSH)
+devbox zed clever-otter          # open in Zed (remote)
 ```
 
 ### Listing devboxes
@@ -311,7 +319,7 @@ The UI shows all devboxes with live CPU/RAM stats, pin state, share URLs, and ac
 
 ## Inside a devbox
 
-Once SSHed in (`ssh root@<name>`):
+Once SSHed in (`ssh <you>@<name>` or `devbox ssh <name>`):
 
 ### Upgrading a devbox
 
@@ -345,7 +353,7 @@ tailscale status
 
 # Install Node.js via mise
 mise use node@lts
-eval "$(~/.local/bin/mise activate bash)"
+eval "$(mise activate bash)"
 node --version
 
 # Install Python
@@ -407,7 +415,7 @@ State is stored in `/data/devboxes/.state.json` on the server:
 **Can't SSH into a devbox:**
 - Ensure your SSH public key is in `~/.ssh/authorized_keys` on the server (`devbox create` reads this by default)
 - Or set `DEVBOX_SSH_PUBKEY="ssh-ed25519 AAAA..."` in `/etc/devbox/config`
-- Check inside the container: `docker exec devbox-<name> cat /root/.ssh/authorized_keys`
+- Check keys inside the container: `docker exec devbox-<name> cat /home/<you>/.ssh/authorized_keys`
 
 **Webapp not accessible:**
 - Confirm you're on Tailscale

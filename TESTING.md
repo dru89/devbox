@@ -20,12 +20,12 @@ End-to-end verification for a fresh devbox setup. Work through these in order.
 ## 3. Create a devbox
 
 - [ ] `devbox create test-box` succeeds
-- [ ] Output shows Tailscale IP and `ssh root@test-box`
+- [ ] Output shows Tailscale IP and `ssh drew@test-box`
 - [ ] `devbox list` shows test-box as running
 
 ## 4. SSH access
 
-- [ ] `ssh root@test-box` connects
+- [ ] `ssh drew@test-box` connects
 - [ ] `tailscale status` inside the container shows connected
 - [ ] `/workspace` directory exists
 - [ ] `cat /var/log/devbox-idle.log` shows idle detection running
@@ -40,7 +40,7 @@ End-to-end verification for a fresh devbox setup. Work through these in order.
 
 ## 6. Sharing
 
-- [ ] Start something to share: `ssh root@test-box 'python3 -m http.server 3000 &'`
+- [ ] Start something to share: `ssh drew@test-box 'python3 -m http.server 3000 &'`
 - [ ] `devbox share test-box` prints a trycloudflare.com URL
 - [ ] URL loads in browser
 - [ ] Share URL appears in webapp
@@ -52,7 +52,7 @@ End-to-end verification for a fresh devbox setup. Work through these in order.
 - [ ] `devbox stop test-box` stops the container
 - [ ] `devbox list` shows test-box as stopped
 - [ ] `devbox create test-box` resumes it (no new Tailscale auth — should be fast)
-- [ ] `ssh root@test-box` works again
+- [ ] `ssh drew@test-box` works again
 
 ## 8. Idle detection
 
@@ -72,7 +72,7 @@ End-to-end verification for a fresh devbox setup. Work through these in order.
 
 - [ ] Make a trivial change to `base-image/CLAUDE.md`, rebuild: `DEVBOX_SERVER=ds9 ./deploy.sh --image-only`
 - [ ] `devbox upgrade test-box` detects safe-only change and syncs in place
-- [ ] Confirm the file changed inside the container: `ssh root@test-box cat /root/CLAUDE.md`
+- [ ] Confirm the file changed inside the container: `ssh drew@test-box cat /root/CLAUDE.md`
 
 ## 11. Destroy
 
@@ -83,7 +83,7 @@ End-to-end verification for a fresh devbox setup. Work through these in order.
 
 ## 12. Startup script
 
-- [ ] SSH into a devbox: `ssh root@test-box`
+- [ ] SSH into a devbox: `ssh drew@test-box`
 - [ ] Create `/workspace/.devbox-startup.sh` that writes a file or starts a process
 - [ ] `chmod +x /workspace/.devbox-startup.sh`
 - [ ] `devbox stop test-box && devbox create test-box`

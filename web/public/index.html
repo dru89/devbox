@@ -328,6 +328,53 @@
     .confirm-box p { color: var(--text); margin-bottom: 16px; line-height: 1.5; }
     .confirm-box .confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
 
+    /* ── Logs modal ── */
+    #logs-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 50;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    #logs-overlay.open { display: flex; }
+
+    .logs-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      width: 100%;
+      max-width: 780px;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .logs-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .logs-header span { color: var(--muted); font-size: 12px; }
+
+    #logs-content {
+      overflow-y: auto;
+      padding: 12px 14px;
+      font-size: 11px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: var(--text);
+      flex: 1;
+    }
+
+    .log-stderr { color: var(--red); }
+
     /* ── Mobile ── */
     @media (max-width: 600px) {
       header { padding: 10px 14px; }
@@ -371,6 +418,17 @@
 
 <!-- Toast -->
 <div id="toast"></div>
+
+<!-- Logs modal -->
+<div id="logs-overlay">
+  <div class="logs-box">
+    <div class="logs-header">
+      <span id="logs-title">logs</span>
+      <button id="logs-close" class="small">✕ close</button>
+    </div>
+    <div id="logs-content"></div>
+  </div>
+</div>
 
 <!-- Confirm overlay -->
 <div id="confirm-overlay">
@@ -505,8 +563,8 @@
 
     const statsHtml = isRunning ? `
       <div class="card-stats">
-        <span class="stat">CPU <span class="stat-val">${box.cpu.toFixed(1)}%</span></span>
-        <span class="stat">RAM <span class="stat-val">${box.memMB} MB</span>${box.memLimitMB > 0 && box.memLimitMB < 900000 ? ` / ${box.memLimitMB} MB` : ''}</span>
+        <span class="stat">CPU <span class="stat-val">${box.cpu.toFixed(1)}%</span>${box.cpuLimit > 0 ? ` / ${box.cpuLimit} cores` : ''}</span>
+        <span class="stat">RAM <span class="stat-val">${box.memMB} MB</span>${box.memLimitMB > 0 ? ` / ${box.memLimitMB} MB` : ''}</span>
       </div>` : '';
 
     const shareUrlHtml = box.share?.active && box.share.url
@@ -527,6 +585,7 @@
     if (box.share?.active) {
       actions.push(`<button class="small action-unshare" data-name="${box.name}">Unshare</button>`);
     }
+    actions.push(`<button class="small action-logs" data-name="${box.name}">Logs</button>`);
     actions.push(`<button class="small danger action-destroy" data-name="${box.name}">Destroy</button>`);
 
     return `
@@ -580,6 +639,12 @@
       } else if (btn.classList.contains('action-unshare')) {
         await api('DELETE', `/devboxes/${name}/share`);
         showToast(`Tunnel stopped for ${name}`);
+
+      } else if (btn.classList.contains('action-logs')) {
+        buttons.forEach(b => b.disabled = false);
+        attachCardListeners();
+        showLogs(name);
+        return;
 
       } else if (btn.classList.contains('action-destroy')) {
         const ok = await confirm(`Destroy devbox "${name}"?\n\nThe container will be removed. Data at /data/devboxes/${name}/ is preserved.`);
@@ -646,6 +711,45 @@
     await fetchDevboxes();
     scheduleRefresh();
   });
+
+  // ── Logs modal ─────────────────────────────────────────────────────────────
+
+  const logsOverlay = document.getElementById('logs-overlay');
+  const logsTitle   = document.getElementById('logs-title');
+  const logsContent = document.getElementById('logs-content');
+
+  document.getElementById('logs-close').addEventListener('click', () => {
+    logsOverlay.classList.remove('open');
+  });
+  logsOverlay.addEventListener('click', (e) => {
+    if (e.target === logsOverlay) logsOverlay.classList.remove('open');
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') logsOverlay.classList.remove('open');
+  });
+
+  async function showLogs(name) {
+    logsTitle.textContent = `logs: ${name}`;
+    logsContent.innerHTML = '<span style="color:var(--muted)">Loading…</span>';
+    logsOverlay.classList.add('open');
+    try {
+      const { lines } = await api('GET', `/devboxes/${name}/logs`);
+      if (!lines.length) {
+        logsContent.innerHTML = '<span style="color:var(--muted)">(no logs)</span>';
+        return;
+      }
+      logsContent.innerHTML = lines.map(l =>
+        `<span class="${l.stream === 'stderr' ? 'log-stderr' : ''}">${escapeHtml(l.text)}</span>`
+      ).join('\n');
+      logsContent.scrollTop = logsContent.scrollHeight;
+    } catch (e) {
+      logsContent.innerHTML = `<span class="log-stderr">Error: ${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  function escapeHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
 
   // ── Init ───────────────────────────────────────────────────────────────────
 

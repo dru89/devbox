@@ -66,31 +66,59 @@ function parseName(containerInfo) {
   return name.replace(/^\/devbox-/, '');
 }
 
-// Get stats for a single running container (CPU %, memory)
+// Get stats and resource limits for a single running container
 async function getContainerStats(container) {
-  return new Promise((resolve) => {
-    container.stats({ stream: false }, (err, data) => {
-      if (err || !data) {
-        resolve({ cpu: 0, memMB: 0, memLimitMB: 0 });
-        return;
-      }
-      try {
-        const cpuDelta = data.cpu_stats.cpu_usage.total_usage - data.precpu_stats.cpu_usage.total_usage;
-        const systemDelta = data.cpu_stats.system_cpu_usage - data.precpu_stats.system_cpu_usage;
-        const numCpus = data.cpu_stats.online_cpus || data.cpu_stats.cpu_usage.percpu_usage?.length || 1;
-        const cpuPercent = systemDelta > 0 ? (cpuDelta / systemDelta) * numCpus * 100 : 0;
-        const memUsage = data.memory_stats.usage || 0;
-        const memLimit = data.memory_stats.limit || 1;
-        resolve({
-          cpu: Math.round(cpuPercent * 10) / 10,
-          memMB: Math.round(memUsage / 1024 / 1024),
-          memLimitMB: Math.round(memLimit / 1024 / 1024),
-        });
-      } catch {
-        resolve({ cpu: 0, memMB: 0, memLimitMB: 0 });
-      }
+  const [stats, inspect] = await Promise.all([
+    new Promise((resolve) => {
+      container.stats({ stream: false }, (err, data) => {
+        if (err || !data) { resolve(null); return; }
+        resolve(data);
+      });
+    }),
+    container.inspect().catch(() => null),
+  ]);
+
+  const nanoCpus = inspect?.HostConfig?.NanoCpus || 0;
+  const cpuLimit = nanoCpus > 0 ? Math.round((nanoCpus / 1e9) * 10) / 10 : 0;
+  const memLimitSet = inspect?.HostConfig?.Memory || 0;
+
+  if (!stats) return { cpu: 0, memMB: 0, memLimitMB: 0, cpuLimit };
+
+  try {
+    const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - stats.precpu_stats.cpu_usage.total_usage;
+    const systemDelta = stats.cpu_stats.system_cpu_usage - stats.precpu_stats.system_cpu_usage;
+    const numCpus = stats.cpu_stats.online_cpus || stats.cpu_stats.cpu_usage.percpu_usage?.length || 1;
+    const cpuPercent = systemDelta > 0 ? (cpuDelta / systemDelta) * numCpus * 100 : 0;
+    const memUsage = stats.memory_stats.usage || 0;
+    // Prefer the HostConfig limit (explicit) over the stats limit (system RAM when unconstrained)
+    const memLimit = memLimitSet > 0 ? memLimitSet : (stats.memory_stats.limit || 0);
+    return {
+      cpu: Math.round(cpuPercent * 10) / 10,
+      memMB: Math.round(memUsage / 1024 / 1024),
+      memLimitMB: memLimitSet > 0 ? Math.round(memLimitSet / 1024 / 1024) : 0,
+      cpuLimit,
+    };
+  } catch {
+    return { cpu: 0, memMB: 0, memLimitMB: 0, cpuLimit };
+  }
+}
+
+// Parse Docker's multiplexed log stream into an array of { stream, text } lines
+function parseDockerLogs(buffer) {
+  const lines = [];
+  let offset = 0;
+  while (offset + 8 <= buffer.length) {
+    const streamType = buffer[offset]; // 1 = stdout, 2 = stderr
+    const size = buffer.readUInt32BE(offset + 4);
+    offset += 8;
+    if (offset + size > buffer.length) break;
+    const chunk = buffer.slice(offset, offset + size).toString('utf8');
+    chunk.split('\n').forEach(line => {
+      if (line) lines.push({ stream: streamType === 2 ? 'stderr' : 'stdout', text: line });
     });
-  });
+    offset += size;
+  }
+  return lines;
 }
 
 // Get disk usage for a devbox data directory
@@ -126,7 +154,7 @@ app.get('/api/devboxes', async (req, res) => {
       const boxState = state[name] || {};
       const isRunning = info.State === 'running';
 
-      let stats = { cpu: 0, memMB: 0, memLimitMB: 0 };
+      let stats = { cpu: 0, memMB: 0, memLimitMB: 0, cpuLimit: 0 };
       if (isRunning) {
         try {
           const container = docker.getContainer(info.Id);
@@ -148,6 +176,7 @@ app.get('/api/devboxes', async (req, res) => {
         pinned: boxState.pinned || false,
         share: boxState.share || { active: false, url: '', port: 80 },
         cpu: stats.cpu,
+        cpuLimit: stats.cpuLimit,
         memMB: stats.memMB,
         memLimitMB: stats.memLimitMB,
         created: info.Created,
@@ -244,6 +273,20 @@ app.delete('/api/devboxes/:name/share', async (req, res) => {
   try {
     const { stdout } = await devboxCmd('unshare', name);
     res.json({ ok: true, output: stdout });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/devboxes/:name/logs — fetch recent container logs
+app.get('/api/devboxes/:name/logs', async (req, res) => {
+  const { name } = req.params;
+  const tail = Math.min(parseInt(req.query.tail || '200', 10), 1000);
+  try {
+    const container = docker.getContainer(`devbox-${name}`);
+    const buffer = await container.logs({ stdout: true, stderr: true, tail, timestamps: true });
+    const lines = parseDockerLogs(buffer);
+    res.json({ lines });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

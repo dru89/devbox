@@ -30,7 +30,7 @@ You are running inside a **devbox** — an isolated Docker container provisioned
 - **`mise`** — manage Node, Python, and other runtime versions per project
   - Install Node LTS: `mise use node@lts`
   - Install Python: `mise use python@3.12`
-  - Activate in current shell: `eval "$(~/.local/bin/mise activate bash)"`
+  - Activate in current shell: `eval "$(mise activate bash)"`
 - **`cloudflared`** — installed on the host, not inside this container. Public sharing is managed via `devbox share` on the host.
 - **`tailscale`** — already running; use `tailscale status` to check connectivity
 - **`git`, `curl`, `wget`, `build-essential`** — standard dev tools
