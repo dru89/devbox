@@ -9,7 +9,7 @@ services:
     environment:
       ATUIN_HOST: "0.0.0.0"
       ATUIN_PORT: "8888"
-      ATUIN_OPEN_REGISTRATION: "true"
+      ATUIN_OPEN_REGISTRATION: "${ATUIN_OPEN_REGISTRATION:-false}"
       ATUIN_DB_URI: "postgresql://atuin:${ATUIN_DB_PASSWORD:-atuin}@atuin-db/atuin"
       ATUIN_SECRET_KEY: "${ATUIN_SECRET_KEY}"
     depends_on:
