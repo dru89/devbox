@@ -313,7 +313,7 @@ cmd_stop() {
     docker inspect "$container" &>/dev/null || die "No devbox named '${name}'."
 
     log "Stopping '${name}'..."
-    docker stop "$container"
+    docker stop "$container" > /dev/null
     echo "devbox '${name}' stopped."
 }
 
@@ -339,11 +339,11 @@ cmd_destroy() {
     status=$(docker inspect "$container" --format '{{.State.Status}}')
     if [[ "$status" == "running" ]]; then
         log "Stopping '${name}'..."
-        docker stop "$container"
+        docker stop "$container" > /dev/null
     fi
 
     log "Removing container '${name}'..."
-    docker rm "$container"
+    docker rm "$container" > /dev/null
 
     remove_tailscale_node "$name"
     state_delete "$name"
@@ -611,8 +611,8 @@ _full_recreate() {
         cmd_unshare "$name" 2>/dev/null || true
     fi
 
-    [[ "$status" == "running" ]] && docker stop "$container"
-    docker rm "$container"
+    [[ "$status" == "running" ]] && docker stop "$container" > /dev/null
+    docker rm "$container" > /dev/null
     remove_tailscale_node "$name"
 
     if ! $was_running; then
