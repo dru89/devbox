@@ -199,9 +199,9 @@ if $DO_ATUIN; then
     echo ""
     echo "  Next: register your account (run once):"
     echo "    ssh ${DEVBOX_HOST}"
-    echo "    atuin register -u <username> -e <email> -p <password> --server http://localhost:8888"
-    echo "    atuin key          # → paste as DEVBOX_ATUIN_KEY in /etc/devbox/config"
-    echo "    cat ~/.local/share/atuin/session  # → paste as DEVBOX_ATUIN_SESSION"
+    echo "    ATUIN_SYNC_ADDRESS=http://localhost:8888 atuin register -u <username> -e <email> -p <password>"
+    echo "    atuin key                              # → DEVBOX_ATUIN_KEY in /etc/devbox/config"
+    echo "    cat ~/.local/share/atuin/session       # → DEVBOX_ATUIN_SESSION in /etc/devbox/config"
 fi
 
 echo ""

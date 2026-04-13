@@ -355,7 +355,7 @@ Run this once on ds9:
 
 ```bash
 ssh ds9
-atuin register -u <username> -e <email> -p <password> --server http://localhost:8888
+ATUIN_SYNC_ADDRESS=http://localhost:8888 atuin register -u <username> -e <email> -p <password>
 ```
 
 ### 3. Grab your key and session token
