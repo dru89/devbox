@@ -8,44 +8,7 @@ log() {
     echo "[entrypoint] $*"
 }
 
-# ── Tailscale ────────────────────────────────────────────────────────────────
-
-log "Starting tailscaled..."
-tailscaled --tun=userspace-networking --socks5-server=localhost:1055 &
-TAILSCALED_PID=$!
-sleep 2
-
-if [[ -n "${TAILSCALE_AUTH_KEY:-}" ]]; then
-    log "Authenticating with Tailscale..."
-    tailscale up \
-        --authkey="${TAILSCALE_AUTH_KEY}" \
-        --hostname="${HOSTNAME}" \
-        --advertise-tags="tag:devbox" \
-        --accept-routes=false \
-        --ssh=false 2>&1 || log "Warning: tailscale up returned non-zero (may already be up)"
-else
-    log "Warning: TAILSCALE_AUTH_KEY not set. Tailscale will not authenticate."
-fi
-
-# ── User setup ───────────────────────────────────────────────────────────────
-
-# Create a named user if DEVBOX_USER is set, so you can SSH in as yourself
-# rather than root. The user gets passwordless sudo for full dev access.
-if [[ -n "${DEVBOX_USER:-}" ]]; then
-    if ! id "$DEVBOX_USER" &>/dev/null; then
-        log "Creating user '${DEVBOX_USER}'..."
-        useradd -m -s /bin/bash "$DEVBOX_USER"
-        echo "${DEVBOX_USER} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/${DEVBOX_USER}"
-        chmod 440 "/etc/sudoers.d/${DEVBOX_USER}"
-    fi
-    chown "${DEVBOX_USER}:${DEVBOX_USER}" /workspace
-    log "User '${DEVBOX_USER}' ready."
-
-    _setup_dotfiles "$DEVBOX_USER" "/home/${DEVBOX_USER}"
-    _setup_atuin    "$DEVBOX_USER" "/home/${DEVBOX_USER}"
-fi
-
-# ── Dotfiles ─────────────────────────────────────────────────────────────────
+# ── Dotfiles ──────────────────────────────────────────────────────────────────
 
 # Clone the user's dotfiles repo and run their devbox init script.
 # Runs as DEVBOX_USER so stow creates symlinks with the right ownership.
@@ -102,9 +65,8 @@ _setup_atuin() {
     " 2>&1 || log "Warning: Atuin login failed for ${user}. Run 'atuin login' manually inside the devbox."
 }
 
-# ── SSH keys ─────────────────────────────────────────────────────────────────
+# ── SSH key helper ────────────────────────────────────────────────────────────
 
-# Install SSH public key(s) for both root (fallback) and DEVBOX_USER if set.
 _install_ssh_keys() {
     local ssh_dir="$1" owner="$2"
     mkdir -p "$ssh_dir"
@@ -114,6 +76,46 @@ _install_ssh_keys() {
     [[ "$owner" != "root" ]] && chown -R "${owner}:${owner}" "$ssh_dir"
 }
 
+# ── Tailscale ────────────────────────────────────────────────────────────────
+
+log "Starting tailscaled..."
+tailscaled --tun=userspace-networking --socks5-server=localhost:1055 &
+TAILSCALED_PID=$!
+sleep 2
+
+if [[ -n "${TAILSCALE_AUTH_KEY:-}" ]]; then
+    log "Authenticating with Tailscale..."
+    tailscale up \
+        --authkey="${TAILSCALE_AUTH_KEY}" \
+        --hostname="${HOSTNAME}" \
+        --advertise-tags="tag:devbox" \
+        --accept-routes=false \
+        --ssh=false 2>&1 || log "Warning: tailscale up returned non-zero (may already be up)"
+else
+    log "Warning: TAILSCALE_AUTH_KEY not set. Tailscale will not authenticate."
+fi
+
+# ── User setup ───────────────────────────────────────────────────────────────
+
+# Create a named user if DEVBOX_USER is set, so you can SSH in as yourself
+# rather than root. The user gets passwordless sudo for full dev access.
+if [[ -n "${DEVBOX_USER:-}" ]]; then
+    if ! id "$DEVBOX_USER" &>/dev/null; then
+        log "Creating user '${DEVBOX_USER}'..."
+        useradd -m -s /bin/bash "$DEVBOX_USER"
+        echo "${DEVBOX_USER} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/${DEVBOX_USER}"
+        chmod 440 "/etc/sudoers.d/${DEVBOX_USER}"
+    fi
+    chown "${DEVBOX_USER}:${DEVBOX_USER}" /workspace
+    log "User '${DEVBOX_USER}' ready."
+
+    _setup_dotfiles "$DEVBOX_USER" "/home/${DEVBOX_USER}"
+    _setup_atuin    "$DEVBOX_USER" "/home/${DEVBOX_USER}"
+fi
+
+# ── SSH keys ─────────────────────────────────────────────────────────────────
+
+# Install SSH public key(s) for both root (fallback) and DEVBOX_USER if set.
 if [[ -n "${DEVBOX_SSH_PUBKEY:-}" ]]; then
     _install_ssh_keys /root/.ssh root
     if [[ -n "${DEVBOX_USER:-}" ]]; then
