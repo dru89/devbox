@@ -15,7 +15,7 @@ log() {
 # Skipped if DEVBOX_DOTFILES_REPO is not set.
 _setup_dotfiles() {
     local user="$1" home_dir="$2"
-    [[ -z "${DEVBOX_DOTFILES_REPO:-}" ]] && return
+    if [[ -z "${DEVBOX_DOTFILES_REPO:-}" ]]; then return; fi
 
     local dotfiles_dir="${home_dir}/.dotfiles"
     if [[ -d "$dotfiles_dir" ]]; then
@@ -47,7 +47,7 @@ _setup_dotfiles() {
 # comes from dotfiles; server URL is overridden via ATUIN_SYNC_ADDRESS env var.
 _setup_atuin() {
     local user="$1" home_dir="$2"
-    [[ -z "${ATUIN_USERNAME:-}" || -z "${ATUIN_PASSWORD:-}" || -z "${ATUIN_KEY:-}" ]] && return
+    if [[ -z "${ATUIN_USERNAME:-}" || -z "${ATUIN_PASSWORD:-}" || -z "${ATUIN_KEY:-}" ]]; then return; fi
 
     local data_dir="${home_dir}/.local/share/atuin"
 
