@@ -22,3 +22,4 @@ web/node_modules/
 .env
 config
 /etc/devbox/
+SPEC.md

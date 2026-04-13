@@ -40,7 +40,59 @@ if [[ -n "${DEVBOX_USER:-}" ]]; then
     fi
     chown "${DEVBOX_USER}:${DEVBOX_USER}" /workspace
     log "User '${DEVBOX_USER}' ready."
+
+    _setup_dotfiles "$DEVBOX_USER" "/home/${DEVBOX_USER}"
+    _setup_atuin    "$DEVBOX_USER" "/home/${DEVBOX_USER}"
 fi
+
+# ── Dotfiles ─────────────────────────────────────────────────────────────────
+
+# Clone the user's dotfiles repo and run their devbox init script.
+# Runs as DEVBOX_USER so stow creates symlinks with the right ownership.
+# Skipped if DEVBOX_DOTFILES_REPO is not set.
+_setup_dotfiles() {
+    local user="$1" home_dir="$2"
+    [[ -z "${DEVBOX_DOTFILES_REPO:-}" ]] && return
+
+    local dotfiles_dir="${home_dir}/.dotfiles"
+    if [[ -d "$dotfiles_dir" ]]; then
+        log "Dotfiles already present for ${user}, skipping clone."
+    else
+        log "Cloning dotfiles for ${user}..."
+        local clone_url="${DEVBOX_DOTFILES_REPO}"
+        # Inject GH_TOKEN for private repos
+        if [[ -n "${GH_TOKEN:-}" && "$clone_url" == https://github.com/* ]]; then
+            clone_url="https://${GH_TOKEN}@${clone_url#https://}"
+        fi
+        if ! runuser -u "$user" -- git clone --quiet "$clone_url" "$dotfiles_dir" 2>&1; then
+            log "Warning: Failed to clone dotfiles from ${DEVBOX_DOTFILES_REPO}"
+            return
+        fi
+    fi
+
+    if [[ -n "${DEVBOX_DOTFILES_INIT:-}" ]]; then
+        log "Running dotfiles init for ${user}: ${DEVBOX_DOTFILES_INIT}"
+        runuser -u "$user" -- bash -c "cd '${dotfiles_dir}' && ${DEVBOX_DOTFILES_INIT}" 2>&1 || \
+            log "Warning: Dotfiles init failed for ${user}"
+    fi
+}
+
+# ── Atuin ─────────────────────────────────────────────────────────────────────
+
+# Write atuin's key and session files so sync works without requiring login.
+# The atuin config itself comes from dotfiles (stowed). The sync server URL
+# is overridden at runtime via the ATUIN_SYNC_ADDRESS env var.
+_setup_atuin() {
+    local user="$1" home_dir="$2"
+    [[ -z "${ATUIN_KEY:-}" || -z "${ATUIN_SESSION:-}" ]] && return
+
+    local data_dir="${home_dir}/.local/share/atuin"
+    runuser -u "$user" -- mkdir -p "$data_dir"
+    printf '%s' "${ATUIN_KEY}"     > "${data_dir}/key"
+    printf '%s' "${ATUIN_SESSION}" > "${data_dir}/session"
+    chown "${user}:${user}" "${data_dir}/key" "${data_dir}/session"
+    log "Atuin key and session installed for ${user}."
+}
 
 # ── SSH keys ─────────────────────────────────────────────────────────────────
 

@@ -17,6 +17,10 @@ Host server (Linux, Docker, Tailscale)
   │
   ├── /opt/devbox/web/server.js          ── Management webapp (port 4242)
   │
+  ├── /opt/devbox/atuin/                 ── Atuin sync server (Docker Compose)
+  │   ├── atuin (port 8888)              ── Sync server (Tailscale-only)
+  │   └── atuin-db (postgres)            ── History database
+  │
   ├── /data/devboxes/
   │   ├── .state.json                    ── Pin + share state
   │   ├── clever-otter/                  ── Persistent workspace (volume-mounted)
@@ -28,7 +32,8 @@ Host server (Linux, Docker, Tailscale)
               │
               ├── tailscaled             ── Own Tailscale node
               ├── sshd                   ── SSH access
-              └── idle-detect            ── Stops container when idle
+              ├── idle-detect            ── Stops container when idle
+              └── atuin                  ── Syncs to ds9:8888 via Tailscale
 ```
 
 Each container is a peer on your Tailscale network — reachable by name, independently authenticated, independently revocable.
@@ -168,6 +173,28 @@ The tunnel process runs on the **host**, not inside the container. It connects t
 - Teardown is just killing the `cloudflared` process
 
 The tunnel PID is stored in `/var/log/devbox/tunnel-<name>.pid` so `devbox unshare` can find and kill it.
+
+---
+
+## Atuin shell history sync
+
+The devbox base image ships with [atuin](https://atuin.sh) installed. A self-hosted atuin server runs on ds9 alongside the other host services, managed by Docker Compose (`/opt/devbox/atuin/docker-compose.yml`).
+
+### Why a separate server (not atuin.sh)
+
+Devbox history is a distinct context from your personal machines — different tools, different projects, different working patterns. Running a separate server keeps devbox history isolated and searchable without polluting history from your Macs or PC. Your existing atuin.sh sync for personal machines continues unchanged.
+
+### How credentials are injected
+
+Atuin encrypts history client-side with an encryption key that never leaves your machines. For all devboxes to read each other's history, they need the same key. The key and session token are stored in `/etc/devbox/config` on ds9 (`DEVBOX_ATUIN_KEY`, `DEVBOX_ATUIN_SESSION`) and injected into each container as environment variables at create time. The entrypoint writes them to `~/.local/share/atuin/key` and `~/.local/share/atuin/session`.
+
+### Server URL override
+
+The atuin config file comes from dotfiles (stowed via `quickstart-devbox.sh`). Rather than modifying that file, the sync server is overridden via the `ATUIN_SYNC_ADDRESS` environment variable, which atuin's config library picks up automatically. This keeps dotfiles clean and working identically on personal machines.
+
+### Network access
+
+The atuin server (port 8888) is restricted to the Tailscale interface via ufw — devboxes reach it at `http://ds9:8888` over Tailscale. It is not accessible from the LAN or internet.
 
 ---
 

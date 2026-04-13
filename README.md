@@ -78,6 +78,16 @@ TAILSCALE_TAILNET="yourname.ts.net"
 # Note: visible via 'docker inspect devbox-<name>'. Fine for a personal server.
 # Generate at: https://github.com/settings/tokens
 # DEVBOX_GITHUB_TOKEN="ghp_..."
+
+# (Optional) Dotfiles — cloned into ~/.dotfiles and initialized on first boot.
+# DEVBOX_DOTFILES_REPO="https://github.com/youruser/dotfiles"
+# DEVBOX_DOTFILES_INIT="bash quickstart-devbox.sh"
+
+# (Optional) Atuin shell history sync — see 'Atuin setup' section below.
+# Get these values after running 'devbox atuin register' or 'atuin login'.
+# DEVBOX_ATUIN_KEY="..."        # from: atuin key
+# DEVBOX_ATUIN_SESSION="..."    # from: cat ~/.local/share/atuin/session
+# DEVBOX_ATUIN_SERVER_URL="http://ds9:8888"
 EOF
 sudo chmod 640 /etc/devbox/config
 sudo chown root:$(whoami) /etc/devbox/config
@@ -320,6 +330,74 @@ http://yourserver:4242
 ```
 
 The UI shows all devboxes with live CPU/RAM stats, pin state, share URLs, and action buttons (Start, Stop, Destroy, Pin, Share). Has a "New Devbox" button. Works on iPhone.
+
+---
+
+## Atuin setup (shell history sync)
+
+Devboxes ship with [atuin](https://atuin.sh) installed. A self-hosted atuin server on ds9 lets all your devboxes share a searchable history.
+
+### 1. Start the atuin server
+
+```bash
+# Copy and fill in the secret key
+ssh ds9 "cp /opt/devbox/atuin/.env.example /opt/devbox/atuin/.env"
+ssh ds9 "echo ATUIN_SECRET_KEY=\$(openssl rand -hex 32) > /opt/devbox/atuin/.env"
+
+DEVBOX_HOST=ds9 ./deploy.sh --atuin
+```
+
+This starts atuin + postgres in Docker and restricts port 8888 to Tailscale only.
+
+### 2. Register an account
+
+Run this once on ds9:
+
+```bash
+ssh ds9
+atuin register -u <username> -e <email> -p <password> --server http://localhost:8888
+```
+
+### 3. Grab your key and session token
+
+```bash
+atuin key
+# → copy this value as DEVBOX_ATUIN_KEY
+
+cat ~/.local/share/atuin/session
+# → copy this value as DEVBOX_ATUIN_SESSION
+```
+
+### 4. Add to /etc/devbox/config
+
+```bash
+DEVBOX_ATUIN_KEY="..."
+DEVBOX_ATUIN_SESSION="..."
+DEVBOX_ATUIN_SERVER_URL="http://ds9:8888"
+```
+
+All new devboxes will now start with atuin syncing to your server. Verify inside a devbox:
+
+```bash
+atuin info          # check sync_address shows ds9:8888
+atuin sync          # trigger a sync
+```
+
+---
+
+## Dotfiles
+
+Devboxes can automatically clone and apply your dotfiles on first boot.
+
+```bash
+# In /etc/devbox/config:
+DEVBOX_DOTFILES_REPO="https://github.com/youruser/dotfiles"
+DEVBOX_DOTFILES_INIT="bash quickstart-devbox.sh"
+```
+
+The repo is cloned to `~/.dotfiles` and `DEVBOX_DOTFILES_INIT` is run from that directory as your user. If your dotfiles repo is private, set `DEVBOX_GITHUB_TOKEN` — it's used for the clone automatically.
+
+Add a `quickstart-devbox.sh` to your dotfiles that stows Linux-compatible topics (skip Homebrew, Mac-specific tools). See the devbox [quickstart-devbox.sh example](https://github.com/dru89/dotfiles) for reference.
 
 ---
 

@@ -18,7 +18,7 @@ step() { echo ""; echo "── $* ───────────────�
 
 usage() {
     cat <<EOF
-Usage: DEVBOX_HOST=<host> ./deploy.sh [--image-only | --scripts | --web | --help]
+Usage: DEVBOX_HOST=<host> ./deploy.sh [--image-only | --scripts | --web | --atuin | --help]
 
 Deploys the devbox system to your server.
 
@@ -32,6 +32,7 @@ Options:
   --image-only    Only rebuild the Docker base image
   --scripts       Only install CLI scripts to /usr/local/bin/
   --web           Only restart the webapp service
+  --atuin         Start (or restart) the atuin sync server
   --sync-only     Only sync files (no build/restart)
   --help          Show this message
 
@@ -52,6 +53,7 @@ EOF
 DO_IMAGE=true
 DO_SCRIPTS=true
 DO_WEB=true
+DO_ATUIN=false
 SYNC_ONLY=false
 
 while [[ $# -gt 0 ]]; do
@@ -60,6 +62,7 @@ while [[ $# -gt 0 ]]; do
         --image-only)  DO_SCRIPTS=false; DO_WEB=false; shift ;;
         --scripts)     DO_IMAGE=false;   DO_WEB=false; shift ;;
         --web)         DO_IMAGE=false;   DO_SCRIPTS=false; shift ;;
+        --atuin)       DO_IMAGE=false;   DO_SCRIPTS=false; DO_WEB=false; DO_ATUIN=true; shift ;;
         --sync-only)   SYNC_ONLY=true; DO_IMAGE=false; DO_SCRIPTS=false; DO_WEB=false; shift ;;
         *) echo "Unknown flag: $1"; usage ;;
     esac
@@ -164,6 +167,40 @@ EOF
 
     $DO_SCRIPTS && log "CLI installed."
     $DO_WEB    && log "Webapp running on ${DEVBOX_HOST}:4242"
+fi
+
+# ── Atuin sync server ─────────────────────────────────────────────────────────
+
+if $DO_ATUIN; then
+    step "Starting atuin sync server on ${DEVBOX_HOST}"
+
+    ATUIN_ENV_FILE="${REMOTE_DIR}/atuin/.env"
+    ssh "$DEVBOX_HOST" "
+        if [[ ! -f '${ATUIN_ENV_FILE}' ]]; then
+            echo 'ERROR: ${ATUIN_ENV_FILE} not found.'
+            echo 'Create it from the example:'
+            echo '  cp ${REMOTE_DIR}/atuin/.env.example ${ATUIN_ENV_FILE}'
+            echo '  # Then edit it and set ATUIN_SECRET_KEY=\$(openssl rand -hex 32)'
+            exit 1
+        fi
+        mkdir -p /data/appdata/atuin /data/appdata/atuin-db
+        cd '${REMOTE_DIR}/atuin' && docker compose up -d
+    "
+
+    # Restrict atuin port to Tailscale interface only
+    ssh -t "$DEVBOX_HOST" "
+        sudo ufw deny 8888 2>/dev/null || true
+        sudo ufw allow in on tailscale0 to any port 8888
+        echo '  ufw: port 8888 restricted to Tailscale interface.'
+    "
+
+    log "Atuin server running on ${DEVBOX_HOST}:8888 (Tailscale only)"
+    echo ""
+    echo "  Next: register your account (run once):"
+    echo "    ssh ${DEVBOX_HOST}"
+    echo "    atuin register -u <username> -e <email> -p <password> --server http://localhost:8888"
+    echo "    atuin key          # → paste as DEVBOX_ATUIN_KEY in /etc/devbox/config"
+    echo "    cat ~/.local/share/atuin/session  # → paste as DEVBOX_ATUIN_SESSION"
 fi
 
 echo ""

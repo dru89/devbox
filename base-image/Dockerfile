@@ -20,7 +20,18 @@ RUN apt-get update && apt-get install -y \
     nano \
     jq \
     unzip \
+    stow \
+    fzf \
+    tig \
     && rm -rf /var/lib/apt/lists/*
+
+# Install atuin (shell history sync)
+RUN curl --proto '=https' --tlsv1.2 -LsSf https://setup.atuin.sh | sh && \
+    mv /root/.atuin/bin/atuin /usr/local/bin/atuin && \
+    rm -rf /root/.atuin
+
+# Install starship prompt
+RUN curl -sS https://starship.rs/install.sh | sh -s -- --yes
 
 # Install Tailscale
 RUN curl -fsSL https://tailscale.com/install.sh | sh
