@@ -50,7 +50,9 @@ RUN mkdir -p /var/run/sshd && \
     echo 'PubkeyAuthentication yes' >> /etc/ssh/sshd_config && \
     echo 'AuthorizedKeysFile .ssh/authorized_keys' >> /etc/ssh/sshd_config && \
     mkdir -p /root/.ssh && \
-    chmod 700 /root/.ssh
+    chmod 700 /root/.ssh && \
+    touch /root/.hushlogin && \
+    touch /etc/skel/.hushlogin
 
 # Create workspace directory
 RUN mkdir -p /workspace
