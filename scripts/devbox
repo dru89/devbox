@@ -759,7 +759,7 @@ cmd_ssh() {
     [[ -n "$name" ]] || { echo "Usage: devbox ssh <name>"; return 1; }
     [[ "$name" == "--help" || "$name" == "-h" ]] && { echo "Usage: devbox ssh <name> [ssh args...]"; return 0; }
     shift
-    exec ssh -t -A -o StrictHostKeyChecking=accept-new "$(whoami)@${name}" "$@"
+    exec ssh -tt -A -o StrictHostKeyChecking=accept-new "$(whoami)@${name}" "$@"
 }
 
 cmd_code() {
