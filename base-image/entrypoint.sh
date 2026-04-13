@@ -73,7 +73,7 @@ _install_ssh_keys() {
     chmod 700 "$ssh_dir"
     echo "${DEVBOX_SSH_PUBKEY}" >> "${ssh_dir}/authorized_keys"
     chmod 600 "${ssh_dir}/authorized_keys"
-    [[ "$owner" != "root" ]] && chown -R "${owner}:${owner}" "$ssh_dir"
+    if [[ "$owner" != "root" ]]; then chown -R "${owner}:${owner}" "$ssh_dir"; fi
 }
 
 # ── Tailscale ────────────────────────────────────────────────────────────────
