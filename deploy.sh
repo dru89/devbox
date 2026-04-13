@@ -84,6 +84,7 @@ rsync -av --delete \
     --exclude='.git' \
     --exclude='node_modules' \
     --exclude='*.log' \
+    --exclude='atuin/.env' \
     ./ "${DEVBOX_HOST}:${REMOTE_DIR}/"
 log "Sync complete."
 
