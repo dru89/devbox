@@ -297,6 +297,10 @@ cmd_create() {
         "$DEVBOX_IMAGE"
 
     state_set "$name" "pinned" "$($pin && echo 'true' || echo 'false')"
+
+    # Clear any stale known_hosts entry — new containers get new SSH host keys.
+    ssh-keygen -R "$name" &>/dev/null || true
+
     _print_connection_info "$name" "$(whoami)"
 }
 
@@ -755,7 +759,7 @@ cmd_ssh() {
     [[ -n "$name" ]] || { echo "Usage: devbox ssh <name>"; return 1; }
     [[ "$name" == "--help" || "$name" == "-h" ]] && { echo "Usage: devbox ssh <name> [ssh args...]"; return 0; }
     shift
-    exec ssh -A "$(whoami)@${name}" "$@"
+    exec ssh -A -o StrictHostKeyChecking=accept-new "$(whoami)@${name}" "$@"
 }
 
 cmd_code() {
