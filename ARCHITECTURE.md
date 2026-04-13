@@ -186,7 +186,7 @@ Devbox history is a distinct context from your personal machines — different t
 
 ### How credentials are injected
 
-Atuin encrypts history client-side with an encryption key that never leaves your machines. For all devboxes to read each other's history, they need the same key. The key and session token are stored in `/etc/devbox/config` on ds9 (`DEVBOX_ATUIN_KEY`, `DEVBOX_ATUIN_SESSION`) and injected into each container as environment variables at create time. The entrypoint writes them to `~/.local/share/atuin/key` and `~/.local/share/atuin/session`.
+Atuin encrypts history client-side with an encryption key that never leaves your machines. For all devboxes to read each other's history, they need the same key. The username, password, and key are stored in `/etc/devbox/config` (`DEVBOX_ATUIN_USERNAME`, `DEVBOX_ATUIN_PASSWORD`, `DEVBOX_ATUIN_KEY`) and injected as environment variables at create time. The entrypoint runs `atuin login` on first boot (detected by the absence of `~/.local/share/atuin/meta.db`), which authenticates against the self-hosted server and sets up local session state. On container restarts the login is skipped — atuin's session is already in `meta.db`.
 
 ### Server URL override
 

@@ -84,9 +84,9 @@ TAILSCALE_TAILNET="yourname.ts.net"
 # DEVBOX_DOTFILES_INIT="bash quickstart-devbox.sh"
 
 # (Optional) Atuin shell history sync — see 'Atuin setup' section below.
-# Get these values after running 'devbox atuin register' or 'atuin login'.
-# DEVBOX_ATUIN_KEY="..."        # from: atuin key
-# DEVBOX_ATUIN_SESSION="..."    # from: cat ~/.local/share/atuin/session
+# DEVBOX_ATUIN_USERNAME="..."
+# DEVBOX_ATUIN_PASSWORD="..."
+# DEVBOX_ATUIN_KEY="..."        # from: atuin key (run on ds9 after registering)
 # DEVBOX_ATUIN_SERVER_URL="http://ds9:8888"
 EOF
 sudo chmod 640 /etc/devbox/config
@@ -358,21 +358,25 @@ ssh ds9
 ATUIN_SYNC_ADDRESS=http://localhost:8888 atuin register -u <username> -e <email> -p <password>
 ```
 
-### 3. Grab your key and session token
+### 3. Grab your encryption key
 
 ```bash
-atuin key
+XDG_DATA_HOME=/tmp/atuin-devbox XDG_CONFIG_HOME=/tmp/atuin-devbox \
+  ATUIN_SYNC_ADDRESS=http://localhost:8888 \
+  atuin login -u <username> -p <password> --key "$(atuin key)"
+
+cat /tmp/atuin-devbox/atuin/key
 # → copy this value as DEVBOX_ATUIN_KEY
 
-cat ~/.local/share/atuin/session
-# → copy this value as DEVBOX_ATUIN_SESSION
+rm -rf /tmp/atuin-devbox
 ```
 
 ### 4. Add to /etc/devbox/config
 
 ```bash
+DEVBOX_ATUIN_USERNAME="..."
+DEVBOX_ATUIN_PASSWORD="..."
 DEVBOX_ATUIN_KEY="..."
-DEVBOX_ATUIN_SESSION="..."
 DEVBOX_ATUIN_SERVER_URL="http://ds9:8888"
 ```
 

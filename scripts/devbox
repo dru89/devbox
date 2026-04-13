@@ -277,8 +277,9 @@ cmd_create() {
     [[ -n "${DEVBOX_GITHUB_TOKEN:-}" ]]      && extra_args+=(-e "GH_TOKEN=${DEVBOX_GITHUB_TOKEN}")
     [[ -n "${DEVBOX_DOTFILES_REPO:-}" ]]     && extra_args+=(-e "DEVBOX_DOTFILES_REPO=${DEVBOX_DOTFILES_REPO}")
     [[ -n "${DEVBOX_DOTFILES_INIT:-}" ]]     && extra_args+=(-e "DEVBOX_DOTFILES_INIT=${DEVBOX_DOTFILES_INIT}")
+    [[ -n "${DEVBOX_ATUIN_USERNAME:-}" ]]    && extra_args+=(-e "ATUIN_USERNAME=${DEVBOX_ATUIN_USERNAME}")
+    [[ -n "${DEVBOX_ATUIN_PASSWORD:-}" ]]    && extra_args+=(-e "ATUIN_PASSWORD=${DEVBOX_ATUIN_PASSWORD}")
     [[ -n "${DEVBOX_ATUIN_KEY:-}" ]]         && extra_args+=(-e "ATUIN_KEY=${DEVBOX_ATUIN_KEY}")
-    [[ -n "${DEVBOX_ATUIN_SESSION:-}" ]]     && extra_args+=(-e "ATUIN_SESSION=${DEVBOX_ATUIN_SESSION}")
     [[ -n "${DEVBOX_ATUIN_SERVER_URL:-}" ]]  && extra_args+=(-e "ATUIN_SYNC_ADDRESS=${DEVBOX_ATUIN_SERVER_URL}")
 
     docker run -d \
@@ -628,8 +629,9 @@ _full_recreate() {
     [[ -n "${DEVBOX_GITHUB_TOKEN:-}" ]]      && extra_args+=(-e "GH_TOKEN=${DEVBOX_GITHUB_TOKEN}")
     [[ -n "${DEVBOX_DOTFILES_REPO:-}" ]]     && extra_args+=(-e "DEVBOX_DOTFILES_REPO=${DEVBOX_DOTFILES_REPO}")
     [[ -n "${DEVBOX_DOTFILES_INIT:-}" ]]     && extra_args+=(-e "DEVBOX_DOTFILES_INIT=${DEVBOX_DOTFILES_INIT}")
+    [[ -n "${DEVBOX_ATUIN_USERNAME:-}" ]]    && extra_args+=(-e "ATUIN_USERNAME=${DEVBOX_ATUIN_USERNAME}")
+    [[ -n "${DEVBOX_ATUIN_PASSWORD:-}" ]]    && extra_args+=(-e "ATUIN_PASSWORD=${DEVBOX_ATUIN_PASSWORD}")
     [[ -n "${DEVBOX_ATUIN_KEY:-}" ]]         && extra_args+=(-e "ATUIN_KEY=${DEVBOX_ATUIN_KEY}")
-    [[ -n "${DEVBOX_ATUIN_SESSION:-}" ]]     && extra_args+=(-e "ATUIN_SESSION=${DEVBOX_ATUIN_SESSION}")
     [[ -n "${DEVBOX_ATUIN_SERVER_URL:-}" ]]  && extra_args+=(-e "ATUIN_SYNC_ADDRESS=${DEVBOX_ATUIN_SERVER_URL}")
 
     docker run -d \

@@ -79,19 +79,27 @@ _setup_dotfiles() {
 
 # ── Atuin ─────────────────────────────────────────────────────────────────────
 
-# Write atuin's key and session files so sync works without requiring login.
-# The atuin config itself comes from dotfiles (stowed). The sync server URL
-# is overridden at runtime via the ATUIN_SYNC_ADDRESS env var.
+# Log into atuin on first boot so sync works without manual intervention.
+# Skipped on container restarts (meta.db already exists). The atuin config
+# comes from dotfiles; server URL is overridden via ATUIN_SYNC_ADDRESS env var.
 _setup_atuin() {
     local user="$1" home_dir="$2"
-    [[ -z "${ATUIN_KEY:-}" || -z "${ATUIN_SESSION:-}" ]] && return
+    [[ -z "${ATUIN_USERNAME:-}" || -z "${ATUIN_PASSWORD:-}" || -z "${ATUIN_KEY:-}" ]] && return
 
     local data_dir="${home_dir}/.local/share/atuin"
-    runuser -u "$user" -- mkdir -p "$data_dir"
-    printf '%s' "${ATUIN_KEY}"     > "${data_dir}/key"
-    printf '%s' "${ATUIN_SESSION}" > "${data_dir}/session"
-    chown "${user}:${user}" "${data_dir}/key" "${data_dir}/session"
-    log "Atuin key and session installed for ${user}."
+
+    # meta.db present means atuin is already configured (restart, not fresh create)
+    if [[ -f "${data_dir}/meta.db" ]]; then
+        log "Atuin already configured for ${user}, skipping login."
+        return
+    fi
+
+    local server_url="${ATUIN_SYNC_ADDRESS:-http://ds9:8888}"
+    log "Logging into atuin for ${user} (server: ${server_url})..."
+    runuser -u "$user" -- bash -c "
+        ATUIN_SYNC_ADDRESS='${server_url}' \
+        atuin login -u '${ATUIN_USERNAME}' -p '${ATUIN_PASSWORD}' --key '${ATUIN_KEY}'
+    " 2>&1 || log "Warning: Atuin login failed for ${user}. Run 'atuin login' manually inside the devbox."
 }
 
 # ── SSH keys ─────────────────────────────────────────────────────────────────
