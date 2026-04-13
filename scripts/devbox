@@ -183,7 +183,7 @@ remove_tailscale_node() {
         return 0
     fi
 
-    curl -sf -X DELETE \
+    curl -sf -X DELETE -o /dev/null \
         -H "Authorization: Bearer ${token}" \
         "https://api.tailscale.com/api/v2/device/${node_id}" && \
         log "Tailscale node '${name}' removed." || \
