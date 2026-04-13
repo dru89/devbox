@@ -21,9 +21,13 @@ RUN apt-get update && apt-get install -y \
     jq \
     unzip \
     stow \
-    fzf \
     tig \
     && rm -rf /var/lib/apt/lists/*
+
+# Install fzf from GitHub releases (apt version is too old to support --bash)
+RUN FZF_VERSION=0.71.0 && \
+    curl -fsSL "https://github.com/junegunn/fzf/releases/download/v${FZF_VERSION}/fzf-${FZF_VERSION}-linux_amd64.tar.gz" | \
+    tar -xz -C /usr/local/bin/ fzf
 
 # Install atuin (shell history sync)
 RUN curl --proto '=https' --tlsv1.2 -LsSf https://setup.atuin.sh | sh && \
