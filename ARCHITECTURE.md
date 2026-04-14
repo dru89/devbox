@@ -206,7 +206,17 @@ Some things this system intentionally doesn't do, and how you'd add them:
 Each devbox already creates a named user (`DEVBOX_USER`) with passwordless sudo, so the owner SSHes in as themselves rather than root. Supporting additional users would mean accepting multiple public keys via `DEVBOX_SSH_PUBKEYS` and creating additional user accounts in the entrypoint.
 
 **Persistent Cloudflare Tunnels with stable URLs**
-Replace the quick tunnel with a named tunnel using `cloudflared tunnel create` and a Cloudflare API token. The URL would be stable across restarts. Requires a Cloudflare account and a bit more config.
+Quick tunnels (`trycloudflare.com`) are ephemeral — the URL changes each time and Cloudflare imposes an undocumented TTL (observed: days). Named tunnels fix this.
+
+Design:
+- One named tunnel running permanently on ds9 (`cloudflared tunnel create devbox`)
+- Wildcard DNS CNAME: `*.devbox.yourdomain.com` → `<tunnel-id>.cfargotunnel.com` (set once in Cloudflare dashboard)
+- `devbox share <name> --port <port>` writes an ingress rule for `<name>.devbox.yourdomain.com → http://<ts-hostname>:<port>` to the tunnel config and reloads `cloudflared` (SIGHUP or API call)
+- `devbox unshare <name>` removes the ingress rule and reloads
+
+Requirements: Cloudflare account, a domain on Cloudflare DNS (~$10/yr), a tunnel credentials JSON on ds9, and `CLOUDFLARE_TUNNEL_ID` + `CLOUDFLARE_DOMAIN` in `/etc/devbox/config`.
+
+State model note: the current share state (`{ active, url, port }`) assumes one public URL per devbox. Named tunnels support multiple ingress rules per devbox (e.g. `clever-otter.devbox.hays.fm → :3000` and `clever-otter-api.devbox.hays.fm → :8080`). When implementing, change the share state to a list of `{ url, port }` entries rather than a single object to avoid a painful migration later.
 
 **Per-devbox resource limits**
 Add `--memory` and `--cpus` flags to the `docker run` call in `devbox create`. Could be configurable via `/etc/devbox/config` or per-devbox flags.
