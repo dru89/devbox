@@ -59,10 +59,13 @@ RUN mkdir -p /var/run/sshd && \
     echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config && \
     echo 'PubkeyAuthentication yes' >> /etc/ssh/sshd_config && \
     echo 'AuthorizedKeysFile .ssh/authorized_keys' >> /etc/ssh/sshd_config && \
+    echo 'PrintMotd no' >> /etc/ssh/sshd_config && \
     mkdir -p /root/.ssh && \
     chmod 700 /root/.ssh && \
     touch /root/.hushlogin && \
-    touch /etc/skel/.hushlogin
+    touch /etc/skel/.hushlogin && \
+    truncate -s 0 /etc/motd && \
+    chmod -x /etc/update-motd.d/* 2>/dev/null || true
 
 # Create workspace directory
 RUN mkdir -p /workspace
