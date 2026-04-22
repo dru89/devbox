@@ -517,8 +517,6 @@ cmd_unshare() {
 cmd_upgrade() {
     local all=false names=()
 
-    log "DEBUG upgrade args ($#): $(printf '[%s]' "$@")"
-
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --all)     all=true; shift ;;
