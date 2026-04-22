@@ -87,6 +87,14 @@ state_set_share() {
        "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
 }
 
+# Extract the container mount point from a Docker volume spec (host:container[:opts]).
+# Used for collision detection when merging auto-mounts with explicit volumes.
+_container_path() {
+    local spec="$1" parts
+    IFS=':' read -ra parts <<< "$spec"
+    [[ ${#parts[@]} -ge 2 ]] && echo "${parts[1]}" || echo "${parts[0]}"
+}
+
 state_set_volumes() {
     local name="$1" tmp
     shift
@@ -234,18 +242,19 @@ cmd_list() {
 }
 
 cmd_create() {
-    local name="" pin=false idle_timeout=30
+    local name="" pin=false idle_timeout=30 no_auto_mounts=false
     local -a volumes=() raw_mounts=()
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --pin)            pin=true; shift ;;
-            --timeout)        idle_timeout="$2"; shift 2 ;;
-            --volume|-v)      volumes+=("$2"); shift 2 ;;
-            --mount)          raw_mounts+=("$2"); shift 2 ;;
-            --help|-h)        _help_create; return 0 ;;
-            -*)               die "Unknown flag: $1" ;;
-            *)                [[ -z "$name" ]] || die "Unexpected argument: $1"; name="$1"; shift ;;
+            --pin)             pin=true; shift ;;
+            --timeout)         idle_timeout="$2"; shift 2 ;;
+            --volume|-v)       volumes+=("$2"); shift 2 ;;
+            --mount)           raw_mounts+=("$2"); shift 2 ;;
+            --no-auto-mounts)  no_auto_mounts=true; shift ;;
+            --help|-h)         _help_create; return 0 ;;
+            -*)                die "Unknown flag: $1" ;;
+            *)                 [[ -z "$name" ]] || die "Unexpected argument: $1"; name="$1"; shift ;;
         esac
     done
 
@@ -258,6 +267,30 @@ cmd_create() {
         [[ -n "$_mount_val" ]] || die "--mount '${_mount_name}': DEVBOX_MOUNT_${_mount_key} not set in ${CONFIG_FILE}"
         volumes+=("$_mount_val")
     done
+
+    if [[ "$no_auto_mounts" == false && -n "${DEVBOX_AUTO_MOUNTS:-}" ]]; then
+        local -A _claimed=()
+        for _vol in "${volumes[@]}"; do
+            _claimed["$(_container_path "$_vol")"]=1
+        done
+        for _auto_name in $DEVBOX_AUTO_MOUNTS; do
+            local _auto_key="${_auto_name//-/_}"
+            local _auto_var="DEVBOX_MOUNT_${_auto_key}"
+            local _auto_val="${!_auto_var:-}"
+            if [[ -z "$_auto_val" ]]; then
+                log "Warning: auto-mount '${_auto_name}': DEVBOX_MOUNT_${_auto_key} not set in ${CONFIG_FILE}, skipping."
+                continue
+            fi
+            local _auto_cpath
+            _auto_cpath=$(_container_path "$_auto_val")
+            if [[ -n "${_claimed[$_auto_cpath]:-}" ]]; then
+                log "Warning: auto-mount '${_auto_name}' skipped (container path ${_auto_cpath} already claimed)"
+            else
+                volumes+=("$_auto_val")
+                _claimed["$_auto_cpath"]=1
+            fi
+        done
+    fi
 
     mkdir -p "$LOG_DIR"
 
@@ -881,20 +914,26 @@ EOF
 }
 
 _help_create() { cat <<EOF
-Usage: devbox create [name] [--pin] [--timeout <minutes>] [--volume <spec>] [--mount <name>]
+Usage: devbox create [name] [--pin] [--timeout <minutes>] [--volume <spec>] [--mount <name>] [--no-auto-mounts]
 
 Create a new devbox, or resume an existing stopped one.
 
 If no name is given, a random <adjective>-<noun> name is generated.
 
 Options:
-  --pin               Pin the devbox (never auto-stops)
-  --timeout <min>     Idle timeout in minutes (default: 30, 0 = pinned)
-  --volume, -v <spec> Bind-mount a volume (host:container[:opts]); repeatable
-  --mount <name>      Bind-mount a named volume from config; repeatable
-                      Reads DEVBOX_MOUNT_<name> from ${CONFIG_FILE}
-                      Dashes in <name> are converted to underscores
-  --help              Show this message
+  --pin                Pin the devbox (never auto-stops)
+  --timeout <min>      Idle timeout in minutes (default: 30, 0 = pinned)
+  --volume, -v <spec>  Bind-mount a volume (host:container[:opts]); repeatable
+  --mount <name>       Bind-mount a named volume from config; repeatable
+                       Reads DEVBOX_MOUNT_<name> from ${CONFIG_FILE}
+                       Dashes in <name> are converted to underscores
+  --no-auto-mounts     Skip mounts listed in DEVBOX_AUTO_MOUNTS
+  --help               Show this message
+
+Auto-mounts:
+  Set DEVBOX_AUTO_MOUNTS in ${CONFIG_FILE} to a space-separated list of named
+  mount keys to apply to every new devbox. Explicit --volume/--mount flags win
+  if they claim the same container path.
 
 Examples:
   devbox create
@@ -904,6 +943,7 @@ Examples:
   devbox create --volume /srv/data:/data:ro myproject
   devbox create --mount obsidian-ro myproject
   devbox create --mount obsidian-ro --volume /srv/logs:/logs myproject
+  devbox create --no-auto-mounts clean-slate
 EOF
 }
 

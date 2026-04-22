@@ -35,15 +35,13 @@ You are running inside a **devbox** — an isolated Docker container provisioned
 - **`tailscale`** — already running; use `tailscale status` to check connectivity
 - **`git`, `curl`, `wget`, `build-essential`** — standard dev tools
 
-## Installing Claude Code
+## Claude Code
 
-Run the helper script:
+Claude Code (`claude`) is pre-installed in this image. To upgrade it:
 
 ```bash
-install-claude-code
+npm install -g @anthropic-ai/claude-code
 ```
-
-This installs the Claude Code CLI (`claude`) using the official installer.
 
 ## Docker
 

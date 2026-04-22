@@ -63,7 +63,7 @@ _devbox() {
                     ;;
                 *)
                     if [[ "$cur" == -* ]]; then
-                        COMPREPLY=($(compgen -W "--pin --timeout --volume -v --mount" -- "$cur"))
+                        COMPREPLY=($(compgen -W "--pin --timeout --volume -v --mount --no-auto-mounts" -- "$cur"))
                     fi
                     ;;
             esac

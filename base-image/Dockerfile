@@ -47,6 +47,12 @@ RUN curl https://mise.run | sh && \
     echo 'eval "$(mise activate bash)"' >> /root/.bashrc && \
     echo 'eval "$(mise activate bash)"' >> /etc/profile.d/mise.sh
 
+# Install Node.js LTS (system-wide) and Claude Code CLI
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/* && \
+    npm install -g @anthropic-ai/claude-code
+
 # Configure SSH
 RUN mkdir -p /var/run/sshd && \
     echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && \

@@ -70,7 +70,8 @@ _devbox() {
                         '--timeout[Idle timeout in minutes]:minutes:' \
                         '--volume[Bind-mount a volume (host:container\[:opts\])]:spec:' \
                         '-v[Bind-mount a volume (host:container\[:opts\])]:spec:' \
-                        "--mount[Named volume from config]:name:(${mounts[*]})"
+                        "--mount[Named volume from config]:name:(${mounts[*]})" \
+                        '--no-auto-mounts[Skip DEVBOX_AUTO_MOUNTS for this devbox]'
                     ;;
                 help)
                     local subcmds=(list ls create start stop destroy share unshare pin)

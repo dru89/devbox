@@ -81,7 +81,7 @@ Register-ArgumentCompleter -Native -CommandName @('devbox', 'devbox.ps1') -Scrip
                     } catch { }
                 }
             } elseif ($prevToken -notin @('--timeout', '--volume', '-v')) {
-                @('--pin', '--timeout', '--volume', '-v', '--mount') |
+                @('--pin', '--timeout', '--volume', '-v', '--mount', '--no-auto-mounts') |
                     Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
                         [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
                     }
