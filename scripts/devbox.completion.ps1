@@ -64,8 +64,27 @@ Register-ArgumentCompleter -Native -CommandName @('devbox', 'devbox.ps1') -Scrip
             }
         }
         'create' {
-            @('--pin', '--timeout') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
-                [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+            $prevToken = if ($wordToComplete -eq '' -and $n -ge 2) {
+                $commandAst.CommandElements[$n - 1].Value
+            } elseif ($wordToComplete -ne '' -and $n -ge 3) {
+                $commandAst.CommandElements[$n - 2].Value
+            } else { '' }
+
+            if ($prevToken -eq '--mount') {
+                if ($env:DEVBOX_HOST) {
+                    try {
+                        & ssh $env:DEVBOX_HOST 'source /etc/devbox/config 2>/dev/null; compgen -v DEVBOX_MOUNT_' 2>$null |
+                            ForEach-Object { ($_ -replace '^DEVBOX_MOUNT_', '') -replace '_', '-' } |
+                            Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                                [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+                            }
+                    } catch { }
+                }
+            } elseif ($prevToken -notin @('--timeout', '--volume', '-v')) {
+                @('--pin', '--timeout', '--volume', '-v', '--mount') |
+                    Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                        [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+                    }
             }
         }
         'help' {

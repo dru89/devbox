@@ -87,6 +87,18 @@ state_set_share() {
        "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
 }
 
+state_set_volumes() {
+    local name="$1" tmp
+    shift
+    local volumes_json="[]"
+    [[ $# -gt 0 ]] && volumes_json=$(printf '%s\n' "$@" | jq -R . | jq -s .)
+    mkdir -p "$(dirname "$STATE_FILE")"
+    [[ -f "$STATE_FILE" ]] || echo '{}' > "$STATE_FILE"
+    tmp=$(mktemp)
+    jq --arg name "$name" --argjson vols "$volumes_json" \
+        '.[$name].volumes = $vols' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
 state_delete() {
     local name="$1" tmp
     [[ -f "$STATE_FILE" ]] || return 0
@@ -223,11 +235,14 @@ cmd_list() {
 
 cmd_create() {
     local name="" pin=false idle_timeout=30
+    local -a volumes=() raw_mounts=()
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --pin)            pin=true; shift ;;
             --timeout)        idle_timeout="$2"; shift 2 ;;
+            --volume|-v)      volumes+=("$2"); shift 2 ;;
+            --mount)          raw_mounts+=("$2"); shift 2 ;;
             --help|-h)        _help_create; return 0 ;;
             -*)               die "Unknown flag: $1" ;;
             *)                [[ -z "$name" ]] || die "Unexpected argument: $1"; name="$1"; shift ;;
@@ -235,6 +250,15 @@ cmd_create() {
     done
 
     load_config
+
+    for _mount_name in "${raw_mounts[@]}"; do
+        local _mount_key="${_mount_name//-/_}"
+        local _mount_var="DEVBOX_MOUNT_${_mount_key}"
+        local _mount_val="${!_mount_var:-}"
+        [[ -n "$_mount_val" ]] || die "--mount '${_mount_name}': DEVBOX_MOUNT_${_mount_key} not set in ${CONFIG_FILE}"
+        volumes+=("$_mount_val")
+    done
+
     mkdir -p "$LOG_DIR"
 
     [[ -z "$name" ]] && name=$(random_name) && log "Generated name: ${name}"
@@ -246,12 +270,14 @@ cmd_create() {
     existing_state=$(docker inspect "$container" --format '{{.State.Status}}' 2>/dev/null || echo "")
 
     if [[ "$existing_state" == "running" ]]; then
+        [[ ${#volumes[@]} -gt 0 ]] && log "Warning: --volume/--mount ignored — '${name}' is already running."
         log "'${name}' is already running."
         _print_connection_info "$name" "$(whoami)"
         return 0
     fi
 
     if [[ "$existing_state" == "exited" || "$existing_state" == "created" ]]; then
+        [[ ${#volumes[@]} -gt 0 ]] && log "Warning: --volume/--mount ignored for existing container. Destroy and recreate to change volumes."
         log "Resuming '${name}'..."
         docker start "$container"
         _print_connection_info "$name" "$(whoami)"
@@ -282,12 +308,16 @@ cmd_create() {
     [[ -n "${DEVBOX_ATUIN_KEY:-}" ]]         && extra_args+=(-e "ATUIN_KEY=${DEVBOX_ATUIN_KEY}")
     [[ -n "${DEVBOX_ATUIN_SERVER_URL:-}" ]]  && extra_args+=(-e "ATUIN_SYNC_ADDRESS=${DEVBOX_ATUIN_SERVER_URL}")
 
+    local -a volume_args=()
+    for _vol in "${volumes[@]}"; do volume_args+=(-v "$_vol"); done
+
     docker run -d \
         --name "$container" \
         --hostname "$name" \
         --cap-add=NET_ADMIN \
         --device=/dev/net/tun \
         -v "${data_dir}:/workspace" \
+        "${volume_args[@]}" \
         -e "TAILSCALE_AUTH_KEY=${ts_auth_key}" \
         -e "DEVBOX_IDLE_TIMEOUT=${idle_timeout}" \
         -e "DEVBOX_NAME=${name}" \
@@ -297,6 +327,7 @@ cmd_create() {
         "$DEVBOX_IMAGE"
 
     state_set "$name" "pinned" "$($pin && echo 'true' || echo 'false')"
+    state_set_volumes "$name" "${volumes[@]}"
 
     # Clear any stale known_hosts entry — new containers get new SSH host keys.
     ssh-keygen -R "$name" &>/dev/null || true
@@ -624,6 +655,13 @@ _full_recreate() {
     pinned=$(state_get "$name" '.pinned // false')
     [[ "$pinned" == "true" ]] && idle_timeout=0
 
+    local -a volumes=()
+    local _volumes_json
+    _volumes_json=$(state_get "$name" '.volumes // []')
+    [[ "$_volumes_json" != "[]" ]] && \
+        while IFS= read -r _vol; do volumes+=("$_vol"); done \
+            < <(jq -r '.[]' <<< "$_volumes_json")
+
     local ts_auth_key ssh_pubkey=""
     ts_auth_key=$(generate_tailscale_key)
     [[ -n "${DEVBOX_SSH_PUBKEY:-}" ]] && ssh_pubkey="$DEVBOX_SSH_PUBKEY"
@@ -638,12 +676,16 @@ _full_recreate() {
     [[ -n "${DEVBOX_ATUIN_KEY:-}" ]]         && extra_args+=(-e "ATUIN_KEY=${DEVBOX_ATUIN_KEY}")
     [[ -n "${DEVBOX_ATUIN_SERVER_URL:-}" ]]  && extra_args+=(-e "ATUIN_SYNC_ADDRESS=${DEVBOX_ATUIN_SERVER_URL}")
 
+    local -a volume_args=()
+    for _vol in "${volumes[@]}"; do volume_args+=(-v "$_vol"); done
+
     docker run -d \
         --name "$container" \
         --hostname "$name" \
         --cap-add=NET_ADMIN \
         --device=/dev/net/tun \
         -v "${DATA_ROOT}/${name}:/workspace" \
+        "${volume_args[@]}" \
         -e "TAILSCALE_AUTH_KEY=${ts_auth_key}" \
         -e "DEVBOX_IDLE_TIMEOUT=${idle_timeout}" \
         -e "DEVBOX_NAME=${name}" \
@@ -839,7 +881,7 @@ EOF
 }
 
 _help_create() { cat <<EOF
-Usage: devbox create [name] [--pin] [--timeout <minutes>]
+Usage: devbox create [name] [--pin] [--timeout <minutes>] [--volume <spec>] [--mount <name>]
 
 Create a new devbox, or resume an existing stopped one.
 
@@ -848,6 +890,10 @@ If no name is given, a random <adjective>-<noun> name is generated.
 Options:
   --pin               Pin the devbox (never auto-stops)
   --timeout <min>     Idle timeout in minutes (default: 30, 0 = pinned)
+  --volume, -v <spec> Bind-mount a volume (host:container[:opts]); repeatable
+  --mount <name>      Bind-mount a named volume from config; repeatable
+                      Reads DEVBOX_MOUNT_<name> from ${CONFIG_FILE}
+                      Dashes in <name> are converted to underscores
   --help              Show this message
 
 Examples:
@@ -855,6 +901,9 @@ Examples:
   devbox create myproject
   devbox create --pin myserver
   devbox create --timeout 60 myproject
+  devbox create --volume /srv/data:/data:ro myproject
+  devbox create --mount obsidian-ro myproject
+  devbox create --mount obsidian-ro --volume /srv/logs:/logs myproject
 EOF
 }
 
@@ -962,6 +1011,9 @@ _print_connection_info() {
     local pinned
     pinned=$(state_get "$name" '.pinned // false')
 
+    local volumes_json
+    volumes_json=$(state_get "$name" '.volumes // []')
+
     echo ""
     echo "devbox '${name}' is ready"
     echo "  ssh ${ssh_user}@${name}"
@@ -970,6 +1022,11 @@ _print_connection_info() {
     [[ "$pinned" == "true" ]] \
         && echo "  Pinned: yes (will not auto-stop)" \
         || echo "  Idle timeout: ${DEVBOX_IDLE_TIMEOUT:-30}m"
+    if [[ "$volumes_json" != "[]" ]] && [[ -n "$volumes_json" ]]; then
+        echo "  Volumes:"
+        while IFS= read -r _vol; do echo "    $_vol"; done \
+            < <(jq -r '.[]' <<< "$volumes_json")
+    fi
 }
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────

@@ -49,9 +49,24 @@ _devbox() {
             esac
             ;;
         create)
-            if [[ "$cur" == --* ]]; then
-                COMPREPLY=($(compgen -W "--pin --timeout" -- "$cur"))
-            fi
+            case "$prev" in
+                --timeout) ;;
+                --volume|-v) ;;
+                --mount)
+                    if [[ -n "${DEVBOX_HOST:-}" ]]; then
+                        local mounts
+                        mounts=$(ssh "$DEVBOX_HOST" \
+                            'source /etc/devbox/config 2>/dev/null; compgen -v DEVBOX_MOUNT_' 2>/dev/null \
+                            | sed 's/^DEVBOX_MOUNT_//' | tr '_' '-')
+                        COMPREPLY=($(compgen -W "$mounts" -- "$cur"))
+                    fi
+                    ;;
+                *)
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=($(compgen -W "--pin --timeout --volume -v --mount" -- "$cur"))
+                    fi
+                    ;;
+            esac
             ;;
         help)
             COMPREPLY=($(compgen -W "$subcommands" -- "$cur"))

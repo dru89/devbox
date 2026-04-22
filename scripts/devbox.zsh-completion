@@ -59,9 +59,18 @@ _devbox() {
                     fi
                     ;;
                 create)
+                    local mounts=()
+                    if [[ -n "${DEVBOX_HOST:-}" ]]; then
+                        mounts=($(ssh "$DEVBOX_HOST" \
+                            'source /etc/devbox/config 2>/dev/null; compgen -v DEVBOX_MOUNT_' 2>/dev/null \
+                            | sed 's/^DEVBOX_MOUNT_//' | tr '_' '-'))
+                    fi
                     _arguments \
                         '--pin[Pin the devbox (never auto-stops)]' \
-                        '--timeout[Idle timeout in minutes]:minutes:'
+                        '--timeout[Idle timeout in minutes]:minutes:' \
+                        '--volume[Bind-mount a volume (host:container\[:opts\])]:spec:' \
+                        '-v[Bind-mount a volume (host:container\[:opts\])]:spec:' \
+                        "--mount[Named volume from config]:name:(${mounts[*]})"
                     ;;
                 help)
                     local subcmds=(list ls create start stop destroy share unshare pin)
