@@ -30,7 +30,9 @@ _devbox() {
                 'create:Create a new devbox (or resume if stopped)'
                 'start:Resume a stopped devbox'
                 'stop:Stop a running devbox'
+                'reconfigure:Update mounts, pin, or timeout and recreate'
                 'destroy:Remove a devbox container (data preserved)'
+                'purge:Delete orphaned workspace data permanently'
                 'share:Expose a devbox publicly via Cloudflare Tunnel'
                 'unshare:Stop the Cloudflare Tunnel for a devbox'
                 'pin:Toggle pin state (pinned devboxes never auto-stop)'
@@ -44,7 +46,7 @@ _devbox() {
             ;;
         args)
             case $words[2] in
-                start|stop|destroy|unshare|pin|upgrade|ssh|code|zed)
+                start|stop|reconfigure|destroy|purge|unshare|pin|upgrade|ssh|code|zed)
                     local devbox_names
                     devbox_names=($(_devbox_names))
                     _describe 'devbox name' devbox_names
@@ -74,7 +76,7 @@ _devbox() {
                         '--no-auto-mounts[Skip DEVBOX_AUTO_MOUNTS for this devbox]'
                     ;;
                 help)
-                    local subcmds=(list ls create start stop destroy share unshare pin)
+                    local subcmds=(list ls create start stop reconfigure destroy purge share unshare pin)
                     _describe 'command' subcmds
                     ;;
             esac

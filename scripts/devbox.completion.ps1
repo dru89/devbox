@@ -11,6 +11,16 @@ function _Devbox_GetNames {
     } catch { }
 }
 
+function _Devbox_GetOrphans {
+    if (-not $env:DEVBOX_HOST) { return }
+    try {
+        & ssh $env:DEVBOX_HOST devbox list 2>$null |
+            Where-Object { $_ -match '\s+orphaned\s+' } |
+            ForEach-Object { ($_ -split '\s+')[0] } |
+            Where-Object { $_ -ne '' }
+    } catch { }
+}
+
 Register-ArgumentCompleter -Native -CommandName @('devbox', 'devbox.ps1') -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
 
@@ -20,7 +30,9 @@ Register-ArgumentCompleter -Native -CommandName @('devbox', 'devbox.ps1') -Scrip
         [System.Management.Automation.CompletionResult]::new('create',  'create',  'ParameterValue', 'Create a new devbox (or resume if stopped)')
         [System.Management.Automation.CompletionResult]::new('start',   'start',   'ParameterValue', 'Resume a stopped devbox')
         [System.Management.Automation.CompletionResult]::new('stop',    'stop',    'ParameterValue', 'Stop a running devbox')
+        [System.Management.Automation.CompletionResult]::new('reconfigure', 'reconfigure', 'ParameterValue', 'Update mounts, pin, or timeout and recreate')
         [System.Management.Automation.CompletionResult]::new('destroy', 'destroy', 'ParameterValue', 'Remove a devbox container (data preserved)')
+        [System.Management.Automation.CompletionResult]::new('purge',   'purge',   'ParameterValue', 'Delete orphaned workspace data permanently')
         [System.Management.Automation.CompletionResult]::new('share',   'share',   'ParameterValue', 'Expose a devbox publicly via Cloudflare Tunnel')
         [System.Management.Automation.CompletionResult]::new('unshare', 'unshare', 'ParameterValue', 'Stop the Cloudflare Tunnel')
         [System.Management.Automation.CompletionResult]::new('pin',     'pin',     'ParameterValue', 'Toggle pin state (pinned devboxes never auto-stop)')
@@ -42,6 +54,41 @@ Register-ArgumentCompleter -Native -CommandName @('devbox', 'devbox.ps1') -Scrip
     switch ($sub) {
         { $_ -in @('start','stop','destroy','unshare','pin','ssh','code','zed') } {
             _Devbox_GetNames | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+            }
+        }
+        'reconfigure' {
+            $prevToken = if ($wordToComplete -eq '' -and $n -ge 2) {
+                $commandAst.CommandElements[$n - 1].Value
+            } elseif ($wordToComplete -ne '' -and $n -ge 3) {
+                $commandAst.CommandElements[$n - 2].Value
+            } else { '' }
+
+            if ($prevToken -eq '--mount') {
+                if ($env:DEVBOX_HOST) {
+                    try {
+                        & ssh $env:DEVBOX_HOST 'source /etc/devbox/config 2>/dev/null; compgen -v DEVBOX_MOUNT_' 2>$null |
+                            ForEach-Object { ($_ -replace '^DEVBOX_MOUNT_', '') -replace '_', '-' } |
+                            Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                                [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+                            }
+                    } catch { }
+                }
+            } elseif ($prevToken -notin @('--timeout', '--volume', '-v')) {
+                if ($wordToComplete -like '-*') {
+                    @('--pin', '--unpin', '--timeout', '--volume', '-v', '--mount') |
+                        Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+                        }
+                } else {
+                    _Devbox_GetNames | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                        [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+                    }
+                }
+            }
+        }
+        'purge' {
+            _Devbox_GetOrphans | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
                 [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
             }
         }

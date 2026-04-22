@@ -2,8 +2,8 @@
 # devbox — manage devbox containers (Windows PowerShell client)
 # Set DEVBOX_HOST in your environment to point at your devbox server.
 
-$Command  = if ($args.Count -gt 0) { [string]$args[0] } else { '' }
-$RestArgs = if ($args.Count -gt 1) { [string[]]$args[1..($args.Count - 1)] } else { [string[]]@() }
+$Command            = if ($args.Count -gt 0) { [string]$args[0] } else { '' }
+[string[]]$RestArgs = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
 
 # These commands open local apps and must run on this machine, not the server.
 if ($Command -in @('ssh', 'code', 'zed')) {
@@ -11,11 +11,14 @@ if ($Command -in @('ssh', 'code', 'zed')) {
         Write-Host "Usage: devbox $Command <name>"
         exit 1
     }
-    $Name  = [string]$RestArgs[0]
-    $Extra = if ($RestArgs.Count -gt 1) { [string[]]$RestArgs[1..($RestArgs.Count - 1)] } else { [string[]]@() }
+    $Name             = [string]$RestArgs[0]
+    [string[]]$Extra  = if ($RestArgs.Count -gt 1) { $RestArgs[1..($RestArgs.Count - 1)] } else { @() }
 
     switch ($Command) {
         'ssh' {
+            # Auto-start if stopped or orphaned (no-op if already running)
+            & ssh $env:DEVBOX_HOST devbox start $Name
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             ssh-keygen -R $Name 2>&1 | Out-Null
             & ssh -tt -A -o StrictHostKeyChecking=accept-new "$env:USERNAME@$Name" $Extra
         }

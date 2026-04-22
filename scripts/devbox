@@ -216,7 +216,24 @@ cmd_list() {
     local containers
     containers=$(docker ps -a --filter 'name=devbox-' --format '{{.Names}}\t{{.Status}}' 2>/dev/null || true)
 
-    if [[ -z "$containers" ]]; then
+    # Build set of names that have a container
+    local -A _has_container=()
+    while IFS=$'\t' read -r container_name _; do
+        [[ -n "$container_name" ]] && _has_container["${container_name#devbox-}"]=1
+    done <<< "$containers"
+
+    # Find data dirs with no corresponding container
+    local -a orphans=()
+    if [[ -d "$DATA_ROOT" ]]; then
+        for _dir in "$DATA_ROOT"/*/; do
+            [[ -d "$_dir" ]] || continue
+            local _dname
+            _dname=$(basename "$_dir")
+            [[ "${_has_container[$_dname]+set}" ]] || orphans+=("$_dname")
+        done
+    fi
+
+    if [[ -z "$containers" && ${#orphans[@]} -eq 0 ]]; then
         echo "No devboxes found."
         return 0
     fi
@@ -225,6 +242,7 @@ cmd_list() {
     printf "%-20s %-10s %-8s %-8s %s\n" "----" "------" "------" "------" "---"
 
     while IFS=$'\t' read -r container_name status_raw; do
+        [[ -n "$container_name" ]] || continue
         local name="${container_name#devbox-}"
         local status="stopped"
         [[ "$status_raw" == Up* ]] && status="running"
@@ -239,6 +257,110 @@ cmd_list() {
 
         printf "%-20s %-10s %-8s %-8s %s\n" "$name" "$status" "$pinned" "$shared" "$url"
     done <<< "$containers"
+
+    for _oname in "${orphans[@]}"; do
+        printf "%-20s %-10s %-8s %-8s %s\n" "$_oname" "orphaned" "-" "-" ""
+    done
+}
+
+# Shared docker run logic used by cmd_create, cmd_start, cmd_reconfigure, and _full_recreate.
+# Spins up a brand-new container. Callers handle stop/rm of any prior container.
+# Args: <name> <pin: true|false> <idle_timeout> <log_file|""> [volume-specs...]
+# Callers must have called load_config first.
+_docker_run_devbox() {
+    local name="$1" pin="$2" idle_timeout="$3" log_file="$4"
+    shift 4
+    local volumes=("$@")
+    local container="devbox-${name}"
+    local data_dir="${DATA_ROOT}/${name}"
+
+    mkdir -p "$data_dir" "$LOG_DIR"
+
+    local ts_auth_key
+    ts_auth_key=$(generate_tailscale_key)
+
+    local ssh_pubkey=""
+    [[ -n "${DEVBOX_SSH_PUBKEY:-}" ]] && ssh_pubkey="$DEVBOX_SSH_PUBKEY"
+    [[ -z "$ssh_pubkey" && -f "$SSH_PUBKEY_FILE" ]] && ssh_pubkey=$(cat "$SSH_PUBKEY_FILE")
+    [[ -z "$ssh_pubkey" ]] && log "Warning: No SSH public key found. Set DEVBOX_SSH_PUBKEY or populate ${SSH_PUBKEY_FILE}."
+
+    local extra_args=()
+    [[ -n "${DEVBOX_GITHUB_TOKEN:-}" ]]      && extra_args+=(-e "GH_TOKEN=${DEVBOX_GITHUB_TOKEN}")
+    [[ -n "${DEVBOX_DOTFILES_REPO:-}" ]]     && extra_args+=(-e "DEVBOX_DOTFILES_REPO=${DEVBOX_DOTFILES_REPO}")
+    [[ -n "${DEVBOX_DOTFILES_INIT:-}" ]]     && extra_args+=(-e "DEVBOX_DOTFILES_INIT=${DEVBOX_DOTFILES_INIT}")
+    [[ -n "${DEVBOX_ATUIN_USERNAME:-}" ]]    && extra_args+=(-e "ATUIN_USERNAME=${DEVBOX_ATUIN_USERNAME}")
+    [[ -n "${DEVBOX_ATUIN_PASSWORD:-}" ]]    && extra_args+=(-e "ATUIN_PASSWORD=${DEVBOX_ATUIN_PASSWORD}")
+    [[ -n "${DEVBOX_ATUIN_KEY:-}" ]]         && extra_args+=(-e "ATUIN_KEY=${DEVBOX_ATUIN_KEY}")
+    [[ -n "${DEVBOX_ATUIN_SERVER_URL:-}" ]]  && extra_args+=(-e "ATUIN_SYNC_ADDRESS=${DEVBOX_ATUIN_SERVER_URL}")
+
+    local volume_args=()
+    for _vol in "${volumes[@]}"; do volume_args+=(-v "$_vol"); done
+
+    local run_cmd=(
+        docker run -d
+        --name "$container"
+        --hostname "$name"
+        --cap-add=NET_ADMIN
+        --device=/dev/net/tun
+        -v "${data_dir}:/workspace"
+        "${volume_args[@]}"
+        -e "TAILSCALE_AUTH_KEY=${ts_auth_key}"
+        -e "DEVBOX_IDLE_TIMEOUT=${idle_timeout}"
+        -e "DEVBOX_NAME=${name}"
+        -e "DEVBOX_USER=$(whoami)"
+        -e "DEVBOX_USER_UID=$(id -u)"
+        -e "DEVBOX_SSH_PUBKEY=${ssh_pubkey}"
+        "${extra_args[@]}"
+        "$DEVBOX_IMAGE"
+    )
+
+    if [[ -n "$log_file" ]]; then
+        "${run_cmd[@]}" >> "$log_file" 2>&1 || return 1
+    else
+        "${run_cmd[@]}" > /dev/null || return 1
+    fi
+
+    state_set "$name" "pinned" "$([[ "$pin" == "true" ]] && echo 'true' || echo 'false')"
+    state_set_volumes "$name" "${volumes[@]}"
+    ssh-keygen -R "$name" &>/dev/null || true
+}
+
+# Resolve --mount flag names to volume specs using DEVBOX_MOUNT_* config vars.
+# Appends results to the named array variable.
+_resolve_mounts() {
+    local -n _arr="$1"; shift
+    for _mount_name in "$@"; do
+        local _key="${_mount_name//-/_}"
+        local _var="DEVBOX_MOUNT_${_key}"
+        local _val="${!_var:-}"
+        [[ -n "$_val" ]] || die "--mount '${_mount_name}': DEVBOX_MOUNT_${_key} not set in ${CONFIG_FILE}"
+        _arr+=("$_val")
+    done
+}
+
+# Apply DEVBOX_AUTO_MOUNTS to volumes, skipping anything that conflicts with already-claimed container paths.
+_apply_auto_mounts() {
+    local -n _arr="$1"
+    [[ -n "${DEVBOX_AUTO_MOUNTS:-}" ]] || return 0
+    local -A _claimed=()
+    for _vol in "${_arr[@]}"; do _claimed["$(_container_path "$_vol")"]=1; done
+    for _auto_name in $DEVBOX_AUTO_MOUNTS; do
+        local _auto_key="${_auto_name//-/_}"
+        local _auto_var="DEVBOX_MOUNT_${_auto_key}"
+        local _auto_val="${!_auto_var:-}"
+        if [[ -z "$_auto_val" ]]; then
+            log "Warning: auto-mount '${_auto_name}': DEVBOX_MOUNT_${_auto_key} not set in ${CONFIG_FILE}, skipping."
+            continue
+        fi
+        local _auto_cpath
+        _auto_cpath=$(_container_path "$_auto_val")
+        if [[ -n "${_claimed[$_auto_cpath]:-}" ]]; then
+            log "Warning: auto-mount '${_auto_name}' skipped (container path ${_auto_cpath} already claimed)"
+        else
+            _arr+=("$_auto_val")
+            _claimed["$_auto_cpath"]=1
+        fi
+    done
 }
 
 cmd_create() {
@@ -259,43 +381,11 @@ cmd_create() {
     done
 
     load_config
-
-    for _mount_name in "${raw_mounts[@]}"; do
-        local _mount_key="${_mount_name//-/_}"
-        local _mount_var="DEVBOX_MOUNT_${_mount_key}"
-        local _mount_val="${!_mount_var:-}"
-        [[ -n "$_mount_val" ]] || die "--mount '${_mount_name}': DEVBOX_MOUNT_${_mount_key} not set in ${CONFIG_FILE}"
-        volumes+=("$_mount_val")
-    done
-
-    if [[ "$no_auto_mounts" == false && -n "${DEVBOX_AUTO_MOUNTS:-}" ]]; then
-        local -A _claimed=()
-        for _vol in "${volumes[@]}"; do
-            _claimed["$(_container_path "$_vol")"]=1
-        done
-        for _auto_name in $DEVBOX_AUTO_MOUNTS; do
-            local _auto_key="${_auto_name//-/_}"
-            local _auto_var="DEVBOX_MOUNT_${_auto_key}"
-            local _auto_val="${!_auto_var:-}"
-            if [[ -z "$_auto_val" ]]; then
-                log "Warning: auto-mount '${_auto_name}': DEVBOX_MOUNT_${_auto_key} not set in ${CONFIG_FILE}, skipping."
-                continue
-            fi
-            local _auto_cpath
-            _auto_cpath=$(_container_path "$_auto_val")
-            if [[ -n "${_claimed[$_auto_cpath]:-}" ]]; then
-                log "Warning: auto-mount '${_auto_name}' skipped (container path ${_auto_cpath} already claimed)"
-            else
-                volumes+=("$_auto_val")
-                _claimed["$_auto_cpath"]=1
-            fi
-        done
-    fi
-
-    mkdir -p "$LOG_DIR"
+    _resolve_mounts volumes "${raw_mounts[@]}"
+    [[ "$no_auto_mounts" == false ]] && _apply_auto_mounts volumes
 
     [[ -z "$name" ]] && name=$(random_name) && log "Generated name: ${name}"
-    $pin && idle_timeout=0
+    [[ "$pin" == true ]] && idle_timeout=0
 
     local container="devbox-${name}"
     local data_dir="${DATA_ROOT}/${name}"
@@ -303,69 +393,60 @@ cmd_create() {
     existing_state=$(docker inspect "$container" --format '{{.State.Status}}' 2>/dev/null || echo "")
 
     if [[ "$existing_state" == "running" ]]; then
-        [[ ${#volumes[@]} -gt 0 ]] && log "Warning: --volume/--mount ignored — '${name}' is already running."
-        log "'${name}' is already running."
-        _print_connection_info "$name" "$(whoami)"
-        return 0
+        die "'${name}' is already running. Use 'devbox reconfigure ${name}' to update its config."
     fi
-
-    if [[ "$existing_state" == "exited" || "$existing_state" == "created" ]]; then
-        [[ ${#volumes[@]} -gt 0 ]] && log "Warning: --volume/--mount ignored for existing container. Destroy and recreate to change volumes."
-        log "Resuming '${name}'..."
-        docker start "$container"
-        _print_connection_info "$name" "$(whoami)"
-        return 0
+    if [[ -n "$existing_state" ]]; then
+        die "'${name}' is stopped. Use 'devbox start ${name}' to resume it, or 'devbox reconfigure ${name}' to update its config."
+    fi
+    if [[ -d "$data_dir" ]]; then
+        die "'${name}' has orphaned workspace data. Use 'devbox start ${name}' to recreate it."
     fi
 
     log "Creating '${name}'..."
-    mkdir -p "$data_dir"
+    _docker_run_devbox "$name" "$pin" "$idle_timeout" "" "${volumes[@]}"
+    _print_connection_info "$name" "$(whoami)"
+}
 
-    local ts_auth_key
-    ts_auth_key=$(generate_tailscale_key)
+cmd_start() {
+    local name="${1:-}"
+    [[ -n "$name" ]] || { _help_start; return 1; }
+    [[ "$name" == "--help" || "$name" == "-h" ]] && { _help_start; return 0; }
 
-    local ssh_pubkey=""
-    if [[ -n "${DEVBOX_SSH_PUBKEY:-}" ]]; then
-        ssh_pubkey="$DEVBOX_SSH_PUBKEY"
-    elif [[ -f "$SSH_PUBKEY_FILE" ]]; then
-        ssh_pubkey=$(cat "$SSH_PUBKEY_FILE")
-    else
-        log "Warning: No SSH public key found. Set DEVBOX_SSH_PUBKEY or populate ${SSH_PUBKEY_FILE}."
+    load_config
+
+    local container="devbox-${name}"
+    local data_dir="${DATA_ROOT}/${name}"
+    local existing_state
+    existing_state=$(docker inspect "$container" --format '{{.State.Status}}' 2>/dev/null || echo "")
+
+    if [[ "$existing_state" == "running" ]]; then
+        log "'${name}' is already running."
+        return 0
     fi
 
-    local extra_args=()
-    [[ -n "${DEVBOX_GITHUB_TOKEN:-}" ]]      && extra_args+=(-e "GH_TOKEN=${DEVBOX_GITHUB_TOKEN}")
-    [[ -n "${DEVBOX_DOTFILES_REPO:-}" ]]     && extra_args+=(-e "DEVBOX_DOTFILES_REPO=${DEVBOX_DOTFILES_REPO}")
-    [[ -n "${DEVBOX_DOTFILES_INIT:-}" ]]     && extra_args+=(-e "DEVBOX_DOTFILES_INIT=${DEVBOX_DOTFILES_INIT}")
-    [[ -n "${DEVBOX_ATUIN_USERNAME:-}" ]]    && extra_args+=(-e "ATUIN_USERNAME=${DEVBOX_ATUIN_USERNAME}")
-    [[ -n "${DEVBOX_ATUIN_PASSWORD:-}" ]]    && extra_args+=(-e "ATUIN_PASSWORD=${DEVBOX_ATUIN_PASSWORD}")
-    [[ -n "${DEVBOX_ATUIN_KEY:-}" ]]         && extra_args+=(-e "ATUIN_KEY=${DEVBOX_ATUIN_KEY}")
-    [[ -n "${DEVBOX_ATUIN_SERVER_URL:-}" ]]  && extra_args+=(-e "ATUIN_SYNC_ADDRESS=${DEVBOX_ATUIN_SERVER_URL}")
+    if [[ -n "$existing_state" ]]; then
+        log "Resuming '${name}'..."
+        docker start "$container" > /dev/null
+        _print_connection_info "$name" "$(whoami)"
+        return 0
+    fi
 
-    local -a volume_args=()
-    for _vol in "${volumes[@]}"; do volume_args+=(-v "$_vol"); done
+    # No container — resurrect from orphaned workspace data
+    [[ -d "$data_dir" ]] || die "No devbox named '${name}'. Create it with: devbox create ${name}"
 
-    docker run -d \
-        --name "$container" \
-        --hostname "$name" \
-        --cap-add=NET_ADMIN \
-        --device=/dev/net/tun \
-        -v "${data_dir}:/workspace" \
-        "${volume_args[@]}" \
-        -e "TAILSCALE_AUTH_KEY=${ts_auth_key}" \
-        -e "DEVBOX_IDLE_TIMEOUT=${idle_timeout}" \
-        -e "DEVBOX_NAME=${name}" \
-        -e "DEVBOX_USER=$(whoami)" \
-        -e "DEVBOX_USER_UID=$(id -u)" \
-        -e "DEVBOX_SSH_PUBKEY=${ssh_pubkey}" \
-        "${extra_args[@]}" \
-        "$DEVBOX_IMAGE"
+    log "Recreating '${name}' from existing workspace..."
 
-    state_set "$name" "pinned" "$($pin && echo 'true' || echo 'false')"
-    state_set_volumes "$name" "${volumes[@]}"
+    local pinned idle_timeout=30
+    pinned=$(state_get "$name" '.pinned // false')
+    [[ "$pinned" == "true" ]] && idle_timeout=0
 
-    # Clear any stale known_hosts entry — new containers get new SSH host keys.
-    ssh-keygen -R "$name" &>/dev/null || true
+    local volumes=()
+    local _vj
+    _vj=$(state_get "$name" '.volumes // []')
+    [[ "$_vj" != "[]" ]] && \
+        while IFS= read -r _vol; do volumes+=("$_vol"); done < <(jq -r '.[]' <<< "$_vj")
 
+    _docker_run_devbox "$name" "$pinned" "$idle_timeout" "" "${volumes[@]}"
     _print_connection_info "$name" "$(whoami)"
 }
 
@@ -380,6 +461,91 @@ cmd_stop() {
     log "Stopping '${name}'..."
     docker stop "$container" > /dev/null
     echo "devbox '${name}' stopped."
+}
+
+cmd_reconfigure() {
+    local name="" no_auto_mounts=false new_pin="" new_timeout=""
+    local -a new_volumes=() raw_mounts=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --pin)             new_pin=true; shift ;;
+            --unpin)           new_pin=false; shift ;;
+            --timeout)         new_timeout="$2"; shift 2 ;;
+            --volume|-v)       new_volumes+=("$2"); shift 2 ;;
+            --mount)           raw_mounts+=("$2"); shift 2 ;;
+            --help|-h)         _help_reconfigure; return 0 ;;
+            -*)                die "Unknown flag: $1" ;;
+            *)                 [[ -z "$name" ]] || die "Unexpected argument: $1"; name="$1"; shift ;;
+        esac
+    done
+
+    [[ -n "$name" ]] || { _help_reconfigure; return 1; }
+
+    load_config
+    _resolve_mounts new_volumes "${raw_mounts[@]}"
+
+    local container="devbox-${name}"
+    local data_dir="${DATA_ROOT}/${name}"
+    local existing_state
+    existing_state=$(docker inspect "$container" --format '{{.State.Status}}' 2>/dev/null || echo "")
+
+    if [[ -z "$existing_state" && ! -d "$data_dir" ]]; then
+        die "No devbox named '${name}'. Create it with: devbox create ${name}"
+    fi
+
+    # Read current stored config
+    local cur_pinned
+    cur_pinned=$(state_get "$name" '.pinned // false')
+    local cur_timeout=30
+    [[ "$cur_pinned" == "true" ]] && cur_timeout=0
+
+    # Merge: explicit flags override stored values
+    local pin="${new_pin:-$cur_pinned}"
+    local idle_timeout="${new_timeout:-$cur_timeout}"
+    [[ "$pin" == "true" ]] && idle_timeout=0
+
+    # Start from stored volumes, append new ones (error on container-path collision)
+    local volumes=()
+    local _vj
+    _vj=$(state_get "$name" '.volumes // []')
+    [[ "$_vj" != "[]" ]] && \
+        while IFS= read -r _vol; do volumes+=("$_vol"); done < <(jq -r '.[]' <<< "$_vj")
+
+    if [[ ${#new_volumes[@]} -gt 0 ]]; then
+        local -A _claimed=()
+        for _vol in "${volumes[@]}"; do _claimed["$(_container_path "$_vol")"]=1; done
+        for _new_vol in "${new_volumes[@]}"; do
+            local _cpath
+            _cpath=$(_container_path "$_new_vol")
+            if [[ -n "${_claimed[$_cpath]:-}" ]]; then
+                die "Mount conflict at container path '${_cpath}'. To replace mounts, destroy and recreate."
+            fi
+            volumes+=("$_new_vol")
+            _claimed["$_cpath"]=1
+        done
+    fi
+
+    # Orphaned: update stored config only; no container to touch
+    if [[ -z "$existing_state" ]]; then
+        log "Updating config for orphaned '${name}' (no container). Run 'devbox start ${name}' to launch."
+        state_set "$name" "pinned" "$([[ "$pin" == "true" ]] && echo 'true' || echo 'false')"
+        state_set_volumes "$name" "${volumes[@]}"
+        return 0
+    fi
+
+    # Has a container — stop if running, remove, recreate (always leaves running)
+    if [[ "$existing_state" == "running" ]]; then
+        log "Stopping '${name}'..."
+        docker stop "$container" > /dev/null
+    fi
+    log "Removing old container..."
+    docker rm "$container" > /dev/null
+    remove_tailscale_node "$name"
+
+    log "Recreating '${name}' with updated config..."
+    _docker_run_devbox "$name" "$pin" "$idle_timeout" "" "${volumes[@]}"
+    _print_connection_info "$name" "$(whoami)"
 }
 
 cmd_destroy() {
@@ -416,6 +582,60 @@ cmd_destroy() {
     echo ""
     echo "devbox '${name}' destroyed."
     echo "  Data preserved at: ${DATA_ROOT}/${name}"
+    echo "  To delete data:    devbox purge ${name}"
+}
+
+cmd_purge() {
+    local name="" yes=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes|-y)  yes=true; shift ;;
+            --help|-h) _help_purge; return 0 ;;
+            -*)        die "Unknown flag: $1" ;;
+            *)         [[ -z "$name" ]] || die "Unexpected argument: $1"; name="$1"; shift ;;
+        esac
+    done
+
+    local -a targets=()
+
+    if [[ -n "$name" ]]; then
+        docker inspect "devbox-${name}" &>/dev/null && \
+            die "'${name}' still has a container. Run 'devbox destroy ${name}' first."
+        [[ -d "${DATA_ROOT}/${name}" ]] || die "No orphaned data found for '${name}'."
+        targets=("$name")
+    else
+        if [[ -d "$DATA_ROOT" ]]; then
+            for _dir in "$DATA_ROOT"/*/; do
+                [[ -d "$_dir" ]] || continue
+                local _dname
+                _dname=$(basename "$_dir")
+                docker inspect "devbox-${_dname}" &>/dev/null || targets+=("$_dname")
+            done
+        fi
+        if [[ ${#targets[@]} -eq 0 ]]; then
+            echo "No orphaned devbox data found."
+            return 0
+        fi
+    fi
+
+    echo "The following devbox data directories will be permanently deleted:"
+    for _t in "${targets[@]}"; do
+        echo "  ${DATA_ROOT}/${_t}"
+    done
+    echo ""
+
+    if ! $yes; then
+        echo -n "Delete? [y/N] "
+        local answer
+        read -r answer
+        [[ "${answer,,}" == "y" || "${answer,,}" == "yes" ]] || { echo "Aborted."; return 1; }
+    fi
+
+    for _t in "${targets[@]}"; do
+        rm -rf "${DATA_ROOT}/${_t}"
+        state_delete "$_t"
+        log "Purged: ${_t}"
+    done
 }
 
 cmd_share() {
@@ -578,8 +798,6 @@ SAFE_FILES=(
 # Also populates UPGRADE_CHANGED_SAFE (array) and UPGRADE_NEEDS_RESTART (bool).
 _analyze_changes() {
     local name="$1" container="devbox-${name}"
-    UPGRADE_CHANGED_SAFE=()
-    UPGRADE_NEEDS_RESTART=false
 
     local current_image_id running_image_id
     current_image_id=$(docker inspect devbox-base --format '{{.Id}}' 2>/dev/null) || {
@@ -589,7 +807,7 @@ _analyze_changes() {
     running_image_id=$(docker inspect "$container" --format '{{.Image}}' 2>/dev/null) || return 1
 
     if [[ "$current_image_id" == "$running_image_id" ]]; then
-        echo "current"
+        UPGRADE_CHANGE_TYPE="current"
         return 0
     fi
 
@@ -628,11 +846,11 @@ _analyze_changes() {
     done
 
     if $packages_changed; then
-        echo "unsafe"
+        UPGRADE_CHANGE_TYPE="unsafe"
     elif [[ ${#UPGRADE_CHANGED_SAFE[@]} -gt 0 ]]; then
-        echo "safe-only"
+        UPGRADE_CHANGE_TYPE="safe-only"
     else
-        echo "no-tracked-changes"
+        UPGRADE_CHANGE_TYPE="no-tracked-changes"
     fi
 }
 
@@ -696,38 +914,17 @@ _full_recreate() {
         while IFS= read -r _vol; do volumes+=("$_vol"); done \
             < <(jq -r '.[]' <<< "$_volumes_json")
 
-    local ts_auth_key ssh_pubkey=""
-    ts_auth_key=$(generate_tailscale_key)
-    [[ -n "${DEVBOX_SSH_PUBKEY:-}" ]] && ssh_pubkey="$DEVBOX_SSH_PUBKEY"
-    [[ -z "$ssh_pubkey" && -f "$SSH_PUBKEY_FILE" ]] && ssh_pubkey=$(cat "$SSH_PUBKEY_FILE")
+    local recreate_log="${LOG_DIR}/recreate-${name}.log"
+    { echo "=== devbox full-recreate: ${name} ==="; echo "=== $(date '+%Y-%m-%d %H:%M:%S') ==="; } >> "$recreate_log"
 
-    local extra_args=()
-    [[ -n "${DEVBOX_GITHUB_TOKEN:-}" ]]      && extra_args+=(-e "GH_TOKEN=${DEVBOX_GITHUB_TOKEN}")
-    [[ -n "${DEVBOX_DOTFILES_REPO:-}" ]]     && extra_args+=(-e "DEVBOX_DOTFILES_REPO=${DEVBOX_DOTFILES_REPO}")
-    [[ -n "${DEVBOX_DOTFILES_INIT:-}" ]]     && extra_args+=(-e "DEVBOX_DOTFILES_INIT=${DEVBOX_DOTFILES_INIT}")
-    [[ -n "${DEVBOX_ATUIN_USERNAME:-}" ]]    && extra_args+=(-e "ATUIN_USERNAME=${DEVBOX_ATUIN_USERNAME}")
-    [[ -n "${DEVBOX_ATUIN_PASSWORD:-}" ]]    && extra_args+=(-e "ATUIN_PASSWORD=${DEVBOX_ATUIN_PASSWORD}")
-    [[ -n "${DEVBOX_ATUIN_KEY:-}" ]]         && extra_args+=(-e "ATUIN_KEY=${DEVBOX_ATUIN_KEY}")
-    [[ -n "${DEVBOX_ATUIN_SERVER_URL:-}" ]]  && extra_args+=(-e "ATUIN_SYNC_ADDRESS=${DEVBOX_ATUIN_SERVER_URL}")
-
-    local -a volume_args=()
-    for _vol in "${volumes[@]}"; do volume_args+=(-v "$_vol"); done
-
-    docker run -d \
-        --name "$container" \
-        --hostname "$name" \
-        --cap-add=NET_ADMIN \
-        --device=/dev/net/tun \
-        -v "${DATA_ROOT}/${name}:/workspace" \
-        "${volume_args[@]}" \
-        -e "TAILSCALE_AUTH_KEY=${ts_auth_key}" \
-        -e "DEVBOX_IDLE_TIMEOUT=${idle_timeout}" \
-        -e "DEVBOX_NAME=${name}" \
-        -e "DEVBOX_USER=$(whoami)" \
-        -e "DEVBOX_USER_UID=$(id -u)" \
-        -e "DEVBOX_SSH_PUBKEY=${ssh_pubkey}" \
-        "${extra_args[@]}" \
-        "$DEVBOX_IMAGE"
+    if ! _docker_run_devbox "$name" "$pinned" "$idle_timeout" "$recreate_log" "${volumes[@]}"; then
+        echo "ERROR: docker run failed at $(date '+%Y-%m-%d %H:%M:%S')" >> "$recreate_log"
+        err "Failed to recreate '${name}'."
+        err "  Container removed; workspace preserved at: ${DATA_ROOT}/${name}"
+        err "  Logs: ${recreate_log}"
+        err "  To recreate manually: devbox start ${name}"
+        return 1
+    fi
 
     if $was_shared; then
         sleep 5
@@ -743,8 +940,11 @@ _upgrade_one() {
     docker inspect "$container" &>/dev/null || { err "No devbox named '${name}'."; return 1; }
 
     echo -n "  Analyzing changes... "
-    local change_type
-    change_type=$(_analyze_changes "$name") || return 1
+    UPGRADE_CHANGED_SAFE=()
+    UPGRADE_NEEDS_RESTART=false
+    UPGRADE_CHANGE_TYPE=""
+    _analyze_changes "$name" || return 1
+    local change_type="$UPGRADE_CHANGE_TYPE"
 
     case "$change_type" in
         current)
@@ -836,6 +1036,23 @@ cmd_ssh() {
     [[ -n "$name" ]] || { echo "Usage: devbox ssh <name>"; return 1; }
     [[ "$name" == "--help" || "$name" == "-h" ]] && { echo "Usage: devbox ssh <name> [ssh args...]"; return 0; }
     shift
+
+    local status
+    status=$(docker inspect "devbox-${name}" --format '{{.State.Status}}' 2>/dev/null || echo "")
+
+    if [[ "$status" != "running" ]]; then
+        cmd_start "$name" || return 1
+        # wait_for_tailscale_ip (called inside cmd_start) doesn't guarantee sshd is ready yet
+        log "Waiting for SSH..."
+        local attempts=0
+        until ssh -q -o ConnectTimeout=2 -o BatchMode=yes \
+                -o StrictHostKeyChecking=no "$(whoami)@${name}" true 2>/dev/null; do
+            attempts=$(( attempts + 1 ))
+            [[ $attempts -ge 15 ]] && { err "Timed out waiting for SSH on '${name}'."; return 1; }
+            sleep 2
+        done
+    fi
+
     ssh-keygen -R "$name" &>/dev/null || true
     exec ssh -tt -A -o StrictHostKeyChecking=accept-new "$(whoami)@${name}" "$@"
 }
@@ -878,15 +1095,17 @@ cmd_pin() {
 cmd_help() {
     local subcmd="${1:-}"
     case "$subcmd" in
-        create)  _help_create;  return ;;
-        start)   _help_create;  return ;;
-        stop)    _help_stop;    return ;;
-        destroy) _help_destroy; return ;;
-        share)   _help_share;   return ;;
-        unshare) _help_unshare; return ;;
-        pin)     _help_pin;     return ;;
-        upgrade) _help_upgrade; return ;;
-        list|ls) _help_list;    return ;;
+        create)      _help_create;      return ;;
+        start)       _help_start;       return ;;
+        stop)        _help_stop;        return ;;
+        reconfigure) _help_reconfigure; return ;;
+        destroy)     _help_destroy;     return ;;
+        purge)       _help_purge;       return ;;
+        share)       _help_share;       return ;;
+        unshare)     _help_unshare;     return ;;
+        pin)         _help_pin;         return ;;
+        upgrade)     _help_upgrade;     return ;;
+        list|ls)     _help_list;        return ;;
     esac
 
     cat <<EOF
@@ -896,11 +1115,13 @@ Usage:
   devbox <command> [args]
 
 Commands:
-  list                     List all devboxes and their status
-  create [name]            Create a new devbox (or resume if stopped)
-  start <name>             Resume a stopped devbox
+  list                     List all devboxes and their status (includes orphans)
+  create [name]            Create a new devbox
+  start <name>             Start or resurrect a devbox
   stop <name>              Stop a running devbox
+  reconfigure <name>       Update mounts, pin, or timeout and recreate
   destroy <name>           Remove a devbox container (data preserved)
+  purge [name]             Delete orphaned workspace data permanently
   share <name>             Expose a devbox publicly via Cloudflare Tunnel
   unshare <name>           Stop the Cloudflare Tunnel for a devbox
   pin <name>               Toggle pin state (pinned devboxes never auto-stop)
@@ -949,10 +1170,45 @@ Examples:
 EOF
 }
 
+_help_start() { cat <<EOF
+Usage: devbox start <name>
+
+Start a devbox. Behavior depends on current state:
+
+  stopped   — resumes the existing container instantly (docker start)
+  orphaned  — creates a new container using stored config and current image
+  running   — no-op, prints connection info
+
+To add or change mounts, use 'devbox reconfigure' instead.
+EOF
+}
+
 _help_stop() { cat <<EOF
 Usage: devbox stop <name>
 
 Stop a running devbox. Data is preserved. Resume with 'devbox start <name>'.
+EOF
+}
+
+_help_reconfigure() { cat <<EOF
+Usage: devbox reconfigure <name> [--mount <name>] [--volume <spec>] [--pin] [--unpin] [--timeout <min>]
+
+Update the configuration of an existing devbox and recreate it.
+
+New --mount and --volume flags are appended to the existing mount list.
+To replace mounts entirely, destroy and recreate the devbox.
+
+If the devbox is running, it is stopped and restarted automatically.
+If the devbox is orphaned (no container), only stored config is updated;
+run 'devbox start <name>' afterward to create the container.
+
+Options:
+  --mount <name>       Add a named mount from config (DEVBOX_MOUNT_<name>)
+  --volume, -v <spec>  Add a bind-mount (host:container[:opts])
+  --pin                Pin the devbox (never auto-stops)
+  --unpin              Remove pin (restores idle timeout)
+  --timeout <min>      Set idle timeout in minutes
+  --help               Show this message
 EOF
 }
 
@@ -962,8 +1218,24 @@ Usage: devbox destroy <name>
 Stop and remove a devbox container. The Tailscale node is removed from your
 tailnet. Data in ${DATA_ROOT}/<name>/ is always preserved.
 
-To also delete data:
-  rm -rf ${DATA_ROOT}/<name>/
+To also delete data: devbox purge <name>
+EOF
+}
+
+_help_purge() { cat <<EOF
+Usage: devbox purge [<name>] [--yes]
+
+Permanently delete workspace data for orphaned devboxes — containers that no
+longer exist but still have data on disk. Use 'devbox list' to see orphans.
+
+If <name> is given, purge just that devbox's data.
+If no name is given, all orphaned data directories are purged.
+
+Options:
+  --yes, -y    Skip confirmation prompt
+  --help       Show this message
+
+Note: to remove a container while keeping data, use 'devbox destroy <name>'.
 EOF
 }
 
@@ -1077,11 +1349,13 @@ COMMAND="${1:-}"
 [[ $# -gt 0 ]] && shift || true
 
 case "$COMMAND" in
-    list|ls)            cmd_list    "$@" ;;
-    create)             cmd_create  "$@" ;;
-    start)              cmd_create  "$@" ;;  # alias — same behavior, explicit intent
-    stop)               cmd_stop    "$@" ;;
-    destroy)            cmd_destroy "$@" ;;
+    list|ls)            cmd_list        "$@" ;;
+    create)             cmd_create      "$@" ;;
+    start)              cmd_start       "$@" ;;
+    stop)               cmd_stop        "$@" ;;
+    reconfigure)        cmd_reconfigure "$@" ;;
+    destroy)            cmd_destroy     "$@" ;;
+    purge)              cmd_purge       "$@" ;;
     share)              cmd_share   "$@" ;;
     unshare)            cmd_unshare "$@" ;;
     pin)                cmd_pin     "$@" ;;

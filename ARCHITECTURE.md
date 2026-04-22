@@ -116,6 +116,42 @@ Workspace data (code, project files) lives in `/data/devboxes/<name>/`, mounted 
 
 ---
 
+## Container lifecycle
+
+Each devbox name can be in one of four states:
+
+- **nonexistent** — no container, no data directory. The name is unclaimed.
+- **running** — container exists and is up. SSH-accessible.
+- **stopped** — container exists but is not running. Container-layer state (installed packages, daemons, anything outside `/workspace`) is fully preserved. `docker start` resumes it instantly without re-authentication.
+- **orphaned** — container removed, but `/data/devboxes/<name>/` is still on disk. Container-layer state is gone; workspace data is intact. A fresh container can be created pointing at the existing workspace.
+
+### Transitions
+
+| Command | From | To | Notes |
+|---|---|---|---|
+| `devbox create [name]` | nonexistent | running | Creates container + data dir |
+| `devbox create [name]` | stopped | running | `docker start` — fast resume, no config change |
+| `devbox create [name]` | orphaned | running | New container, stored config, existing workspace |
+| `devbox stop <name>` | running | stopped | Container preserved |
+| `devbox destroy <name>` | running or stopped | orphaned | Container removed, data preserved |
+| `devbox purge [name]` | orphaned | nonexistent | Permanently deletes data |
+| `devbox upgrade <name>` (safe-only) | running | running | In-place file sync, no restart |
+| `devbox upgrade <name>` (full recreate) | running | running | Internally: orphaned → running with new image |
+| `devbox upgrade <name>` (full recreate fails) | running | orphaned | Container removed but `docker run` failed — see `/var/log/devbox/recreate-<name>.log` |
+
+### Design intent
+
+`devbox create` only creates new boxes — it errors if a container or data directory already exists. `devbox start` handles both stopped-resume (`docker start`) and orphan-resurrection (new container from stored config). `devbox reconfigure` updates mounts, pin state, or timeout and recreates the container in place.
+
+**`devbox reconfigure <name> [--mount ...] [--pin] [--unpin] [--timeout ...]`**:
+- Reads current stored volumes from state and appends new `--mount`/`--volume` flags
+- Errors on container-path collisions (to replace mounts entirely: destroy and recreate)
+- If running or stopped: stops, removes, and recreates the container; always leaves it running
+- If orphaned: updates stored config only; the new config takes effect on next `devbox start`
+- Uses the current image, so it is also implicitly an upgrade (equivalent to a full-recreate upgrade)
+
+---
+
 ## Idle detection
 
 The idle detection sidecar (`/usr/local/bin/idle-detect`) runs inside each container and polls every 30 seconds. It considers the container active if either:

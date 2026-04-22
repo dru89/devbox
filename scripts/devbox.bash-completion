@@ -22,7 +22,7 @@ _devbox() {
         cword=$COMP_CWORD
     }
 
-    local subcommands="list ls create start stop destroy share unshare pin upgrade ssh code zed help"
+    local subcommands="list ls create start stop reconfigure destroy purge share unshare pin upgrade ssh code zed help"
 
     # Complete subcommand
     if [[ $cword -eq 1 ]]; then
@@ -33,7 +33,7 @@ _devbox() {
     local subcommand="${words[1]}"
 
     case "$subcommand" in
-        start|stop|destroy|share|unshare|pin|upgrade|ssh|code|zed)
+        start|stop|reconfigure|destroy|purge|share|unshare|pin|upgrade|ssh|code|zed)
             COMPREPLY=($(compgen -W "$(_devbox_names)" -- "$cur"))
             ;;
         share)
@@ -64,6 +64,28 @@ _devbox() {
                 *)
                     if [[ "$cur" == -* ]]; then
                         COMPREPLY=($(compgen -W "--pin --timeout --volume -v --mount --no-auto-mounts" -- "$cur"))
+                    fi
+                    ;;
+            esac
+            ;;
+        reconfigure)
+            case "$prev" in
+                --timeout) ;;
+                --volume|-v) ;;
+                --mount)
+                    if [[ -n "${DEVBOX_HOST:-}" ]]; then
+                        local mounts
+                        mounts=$(ssh "$DEVBOX_HOST" \
+                            'source /etc/devbox/config 2>/dev/null; compgen -v DEVBOX_MOUNT_' 2>/dev/null \
+                            | sed 's/^DEVBOX_MOUNT_//' | tr '_' '-')
+                        COMPREPLY=($(compgen -W "$mounts" -- "$cur"))
+                    fi
+                    ;;
+                *)
+                    if [[ "$cur" == -* ]]; then
+                        COMPREPLY=($(compgen -W "--pin --unpin --timeout --volume -v --mount" -- "$cur"))
+                    else
+                        COMPREPLY=($(compgen -W "$(_devbox_names)" -- "$cur"))
                     fi
                     ;;
             esac
