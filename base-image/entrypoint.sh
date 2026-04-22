@@ -101,8 +101,8 @@ fi
 # rather than root. The user gets passwordless sudo for full dev access.
 if [[ -n "${DEVBOX_USER:-}" ]]; then
     if ! id "$DEVBOX_USER" &>/dev/null; then
-        log "Creating user '${DEVBOX_USER}'..."
-        useradd -m -s /bin/bash "$DEVBOX_USER"
+        log "Creating user '${DEVBOX_USER}' (uid: ${DEVBOX_USER_UID:-1000})..."
+        useradd -u "${DEVBOX_USER_UID:-1000}" -m -s /bin/bash "$DEVBOX_USER"
         echo "${DEVBOX_USER} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/${DEVBOX_USER}"
         chmod 440 "/etc/sudoers.d/${DEVBOX_USER}"
     fi

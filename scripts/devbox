@@ -355,6 +355,7 @@ cmd_create() {
         -e "DEVBOX_IDLE_TIMEOUT=${idle_timeout}" \
         -e "DEVBOX_NAME=${name}" \
         -e "DEVBOX_USER=$(whoami)" \
+        -e "DEVBOX_USER_UID=$(id -u)" \
         -e "DEVBOX_SSH_PUBKEY=${ssh_pubkey}" \
         "${extra_args[@]}" \
         "$DEVBOX_IMAGE"
@@ -723,6 +724,7 @@ _full_recreate() {
         -e "DEVBOX_IDLE_TIMEOUT=${idle_timeout}" \
         -e "DEVBOX_NAME=${name}" \
         -e "DEVBOX_USER=$(whoami)" \
+        -e "DEVBOX_USER_UID=$(id -u)" \
         -e "DEVBOX_SSH_PUBKEY=${ssh_pubkey}" \
         "${extra_args[@]}" \
         "$DEVBOX_IMAGE"
