@@ -3,7 +3,7 @@
 # Set DEVBOX_HOST in your environment to point at your devbox server.
 
 $Command  = if ($args.Count -gt 0) { $args[0] } else { '' }
-$RestArgs = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
+$RestArgs = if ($args.Count -gt 1) { @($args[1..($args.Count - 1)]) } else { @() }
 
 # These commands open local apps and must run on this machine, not the server.
 if ($Command -in @('ssh', 'code', 'zed')) {
