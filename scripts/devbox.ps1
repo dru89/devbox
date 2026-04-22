@@ -17,7 +17,7 @@ if ($Command -in @('ssh', 'code', 'zed')) {
     switch ($Command) {
         'ssh' {
             ssh-keygen -R $Name 2>&1 | Out-Null
-            & ssh -tt -A -o StrictHostKeyChecking=accept-new "$env:USERNAME@$Name" @Extra
+            & ssh -tt -A -o StrictHostKeyChecking=accept-new "$env:USERNAME@$Name" $Extra
         }
         'code' { & code --remote "ssh-remote+$env:USERNAME@$Name" /workspace }
         'zed'  { & zed "ssh://$env:USERNAME@$Name/workspace" }
@@ -35,6 +35,6 @@ if (-not $env:DEVBOX_HOST) {
 if ($Command -eq '') {
     & ssh $env:DEVBOX_HOST devbox
 } else {
-    & ssh $env:DEVBOX_HOST devbox $Command @RestArgs
+    & ssh $env:DEVBOX_HOST devbox $Command $RestArgs
 }
 exit $LASTEXITCODE
