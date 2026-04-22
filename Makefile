@@ -9,12 +9,37 @@
 #
 # Override PREFIX to change the install location (default: /usr/local):
 #   make install PREFIX=~/.local
+#
+# On Windows (Git Bash / MSYS2), installs both the bash script and the
+# PowerShell client. Override WIN_BIN to change the PowerShell install dir:
+#   make install WIN_BIN=~/scripts
 
-PREFIX  ?= /usr/local
-BINDIR   = $(PREFIX)/bin
-ZSH_SITE = $(PREFIX)/share/zsh/site-functions
+PREFIX   ?= /usr/local
+BINDIR    = $(PREFIX)/bin
+ZSH_SITE  = $(PREFIX)/share/zsh/site-functions
+
+# Detect Windows: the OS env var is set to Windows_NT on all Windows environments
+# (PowerShell, CMD, Git Bash, MSYS2) but not on macOS, Linux, or WSL.
+ifeq ($(OS),Windows_NT)
+WINDOWS := 1
+else
+WINDOWS :=
+endif
 
 .PHONY: install uninstall
+
+ifdef WINDOWS
+
+# Pass -WinBin only when the caller overrides WIN_BIN on the command line.
+WIN_BIN_ARG = $(if $(WIN_BIN),-WinBin "$(WIN_BIN)",)
+
+install:
+	pwsh -NoLogo -NonInteractive -File scripts/install-client.ps1 $(WIN_BIN_ARG)
+
+uninstall:
+	pwsh -NoLogo -NonInteractive -File scripts/install-client.ps1 $(WIN_BIN_ARG) -Uninstall
+
+else
 
 install:
 	install -d $(BINDIR)
@@ -41,3 +66,5 @@ install:
 uninstall:
 	rm -f $(BINDIR)/devbox $(ZSH_SITE)/_devbox
 	@echo "Removed devbox."
+
+endif
