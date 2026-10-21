@@ -343,11 +343,15 @@ Devboxes ship with [atuin](https://atuin.sh) installed. A self-hosted atuin serv
 # Copy and fill in the secret key
 ssh ds9 "cp /opt/devbox/atuin/.env.example /opt/devbox/atuin/.env"
 ssh ds9 "echo ATUIN_SECRET_KEY=\$(openssl rand -hex 32) > /opt/devbox/atuin/.env"
+# Publish port 8888 on ds9's Tailscale IP only
+ssh ds9 "echo ATUIN_BIND_ADDR=\$(tailscale ip -4) >> /opt/devbox/atuin/.env"
 
 DEVBOX_HOST=ds9 ./deploy.sh --atuin
 ```
 
-This starts atuin + postgres in Docker and restricts port 8888 to Tailscale only.
+This starts atuin + postgres in Docker, with port 8888 published on the address in `ATUIN_BIND_ADDR`. Docker-published ports bypass ufw, so a firewall rule can't do this job; if `ATUIN_BIND_ADDR` is empty, atuin listens on every interface and `deploy.sh` warns about it.
+
+Binding to the Tailscale IP means Docker can't start the container until that IP exists. If Docker comes up before Tailscale at boot, atuin fails to start. Setting `net.ipv4.ip_nonlocal_bind = 1` in `/etc/sysctl.d/` lets the bind succeed anyway.
 
 ### 2. Register an account
 
@@ -355,14 +359,14 @@ Run this once on ds9:
 
 ```bash
 ssh ds9
-ATUIN_SYNC_ADDRESS=http://localhost:8888 atuin register -u <username> -e <email> -p <password>
+ATUIN_SYNC_ADDRESS=http://$(tailscale ip -4):8888 atuin register -u <username> -e <email> -p <password>
 ```
 
 ### 3. Grab your encryption key
 
 ```bash
 XDG_DATA_HOME=/tmp/atuin-devbox XDG_CONFIG_HOME=/tmp/atuin-devbox \
-  ATUIN_SYNC_ADDRESS=http://localhost:8888 \
+  ATUIN_SYNC_ADDRESS=http://$(tailscale ip -4):8888 \
   atuin login -u <username> -p <password> --key "$(atuin key)"
 
 cat /tmp/atuin-devbox/atuin/key

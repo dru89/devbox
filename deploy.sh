@@ -186,20 +186,23 @@ if $DO_ATUIN; then
         fi
         mkdir -p /data/appdata/atuin /data/appdata/atuin-db
         cd '${REMOTE_DIR}/atuin' && docker compose up -d
+
+        # ufw can't restrict a Docker-published port (Docker's DNAT rules run
+        # before ufw sees the traffic), so the bind address is the only control.
+        if ! grep -q '^ATUIN_BIND_ADDR=.' '${ATUIN_ENV_FILE}'; then
+            echo ''
+            echo 'WARNING: ATUIN_BIND_ADDR is not set in ${ATUIN_ENV_FILE},'
+            echo 'so port 8888 is published on every interface. To make atuin'
+            echo 'Tailscale-only, set it to the output of: tailscale ip -4'
+            echo 'and rerun deploy.sh --atuin.'
+        fi
     "
 
-    # Restrict atuin port to Tailscale interface only
-    ssh -t "$DEVBOX_HOST" "
-        sudo ufw deny 8888 2>/dev/null || true
-        sudo ufw allow in on tailscale0 to any port 8888
-        echo '  ufw: port 8888 restricted to Tailscale interface.'
-    "
-
-    log "Atuin server running on ${DEVBOX_HOST}:8888 (Tailscale only)"
+    log "Atuin server running on ${DEVBOX_HOST}:8888"
     echo ""
     echo "  Next: register your account (run once):"
     echo "    ssh ${DEVBOX_HOST}"
-    echo "    ATUIN_SYNC_ADDRESS=http://localhost:8888 atuin register -u <username> -e <email> -p <password>"
+    echo "    ATUIN_SYNC_ADDRESS=http://\$(tailscale ip -4):8888 atuin register -u <username> -e <email> -p <password>"
     echo "    atuin key                              # → DEVBOX_ATUIN_KEY in /etc/devbox/config"
     echo "    cat ~/.local/share/atuin/session       # → DEVBOX_ATUIN_SESSION in /etc/devbox/config"
 fi
