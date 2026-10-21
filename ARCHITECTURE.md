@@ -18,7 +18,7 @@ Host server (Linux, Docker, Tailscale)
   ├── /opt/devbox/web/server.js          ── Management webapp (port 4242)
   │
   ├── /opt/devbox/atuin/                 ── Atuin sync server (Docker Compose)
-  │   ├── atuin (port 8888)              ── Sync server (Tailscale-only)
+  │   ├── atuin (port 8888)              ── Sync server (bound to ATUIN_BIND_ADDR)
   │   └── atuin-db (postgres)            ── History database
   │
   ├── /data/devboxes/
@@ -33,7 +33,7 @@ Host server (Linux, Docker, Tailscale)
               ├── tailscaled             ── Own Tailscale node
               ├── sshd                   ── SSH access
               ├── idle-detect            ── Stops container when idle
-              └── atuin                  ── Syncs to ds9:8888 via Tailscale
+              └── atuin                  ── Syncs to ds9:8888
 ```
 
 Each container is a peer on your Tailscale network — reachable by name, independently authenticated, independently revocable.
@@ -230,7 +230,9 @@ The atuin config file comes from dotfiles (stowed via `quickstart-devbox.sh`). R
 
 ### Network access
 
-The atuin server (port 8888) is restricted to the Tailscale interface via ufw — devboxes reach it at `http://ds9:8888` over Tailscale. It is not accessible from the LAN or internet.
+The atuin server's port 8888 is published by Docker, which puts it outside ufw's reach: Docker's DNAT rules handle the traffic before ufw's rules see it, and Tailscale's own `ts-input` chain accepts everything on `tailscale0` before ufw runs. Exposure is controlled by the bind address instead. With `ATUIN_BIND_ADDR` in `atuin/.env` set to the host's Tailscale IPv4, the server listens only there and the LAN can't reach it; left empty, it listens on every interface.
+
+Devboxes connect to `DEVBOX_ATUIN_SERVER_URL` (default `http://ds9:8888`). Their Tailscale runs in userspace mode with no proxy configured for atuin, so that connection leaves the container through the Docker bridge, not the devbox's tailnet node. Whatever `ds9` resolves to inside the container has to be an address the bind covers.
 
 ---
 

@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     command: start
     ports:
-      - "8888:8888"
+      - "${ATUIN_BIND_ADDR:-0.0.0.0}:8888:8888"
     environment:
       ATUIN_HOST: "0.0.0.0"
       ATUIN_PORT: "8888"
